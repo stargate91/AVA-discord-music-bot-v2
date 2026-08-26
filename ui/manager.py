@@ -1,12 +1,12 @@
 import asyncio
 import discord
-from ui_translate import t, init_translate
-from radio_actions import RadioState as RadioStatusEnum
+from ui.i18n import t, init_translate
+from core.actions import RadioState
 from core.models import Song
-from ui_player import WelcomeLayout, FrequencyStationView, NowPlayingView, init_player_ui
-from ui_search import FullQueueView
-from ui_utils import safe_delete_message, safe_fetch_message
-from logger import log
+from ui.views.player import WelcomeLayout, FrequencyStationView, NowPlayingView, init_player_ui
+from ui.views.queue import FullQueueView
+from ui.utils import safe_delete_message, safe_fetch_message
+from utils.logger import log
 
 class UIManager:
     def __init__(self, bot: discord.Client, config, radio):
@@ -15,6 +15,7 @@ class UIManager:
         self.radio = radio
         self._ui_lock = asyncio.Lock()
         self._last_cleanup = 0.0
+        self._last_presence_sig = None
         
         # Initialize sub-systems
         init_translate(radio)
@@ -28,18 +29,16 @@ class UIManager:
     async def _update_ui_internal(self, song: Song | None, force_channel_id: int | None = None, force_cleanup: bool = False):
         """Internal UI rendering logic."""
         try:
-            # Handle potential dict fallback from older code
             if isinstance(song, dict):
                 song = None
                 
             has_no_song = song is None or not song.path
-            # The player should be shown IF we have a song OR we are in a voice channel
-            # This ensures "Waiting for next song" shows up properly when IDLE but connected.
             show_player = bool(not has_no_song or self.radio.voice_channel_id)
             
-            if not self.bot or self.bot.is_closed(): return
+            if not self.bot or self.bot.is_closed():
+                return
             
-            # 1. Presence & Channel Status Updates
+            # 1. Presence & Channel Status Updates (with deduplication)
             await self._update_presence(song)
             await self._update_channel_status(song, force_channel_id=force_channel_id)
 
@@ -57,8 +56,7 @@ class UIManager:
             # 3. Handle Player Message (Centerpiece)
             await self._render_player_message(channel, song, show_player)
 
-            # 4. Aggressive Cleanup (now after rendering to ensure new IDs are saved)
-            # Add a small delay to ensure Discord's cache is updated before we sweep history
+            # 4. Aggressive Cleanup
             await asyncio.sleep(0.5) 
             await self._cleanup_stray_messages(channel, force=force_cleanup or not show_player)
 
@@ -67,25 +65,29 @@ class UIManager:
 
     async def _update_presence(self, song: Song | None):
         try:
-            if self.radio.status == RadioStatusEnum.PLAYING and song:
-                # Use native Listening activity so Discord handles the "Listening to" prefix automatically
-                activity = discord.Activity(
-                    type=discord.ActivityType.listening,
-                    name=song.title or t('unknown')
-                )
-                await self.bot.change_presence(activity=activity)
+            if self.radio.status == RadioState.PLAYING and song:
+                current_sig = f"PLAYING:{song.title}"
+                if current_sig != self._last_presence_sig:
+                    activity = discord.Activity(
+                        type=discord.ActivityType.listening,
+                        name=song.title or t('unknown')
+                    )
+                    await self.bot.change_presence(activity=activity)
+                    self._last_presence_sig = current_sig
             else:
                 import random
-                # Handle potential list of messages for persona variety
-                if self.radio.status == RadioStatusEnum.PAUSED:
+                if self.radio.status == RadioState.PAUSED:
                     msg_src = t('holding_rhythm')
-                elif self.radio.status == RadioStatusEnum.IDLE:
+                elif self.radio.status == RadioState.IDLE:
                     msg_src = t('waiting_melody')
-                else: # STOPPED or other
+                else:
                     msg_src = t('at_command')
                 
                 final_msg = random.choice(msg_src) if isinstance(msg_src, list) else msg_src
-                await self.bot.change_presence(activity=discord.Game(name=final_msg))
+                current_sig = f"{self.radio.status.name}:{final_msg}"
+                if current_sig != self._last_presence_sig:
+                    await self.bot.change_presence(activity=discord.Game(name=final_msg))
+                    self._last_presence_sig = current_sig
         except Exception as e:
             log.debug(f"Presence update failed: {e}")
 
@@ -106,37 +108,30 @@ class UIManager:
             if not channel or not isinstance(channel, discord.VoiceChannel):
                 return
 
-            if self.radio.status == RadioStatusEnum.PLAYING and song:
+            if self.radio.status == RadioState.PLAYING and song:
                 status_text = t('channel_status_playing', TITLE=song.title)
             else:
-                status_text = None # Clear status when not playing or idle
+                status_text = None
 
-            # Basic rate limit protection: only update if it actually changed
-            # Note: channel.status availability depends on discord.py 2.4+
             current_status = getattr(channel, 'status', 'UNKNOWN_ATTR')
             if current_status == 'UNKNOWN_ATTR' or current_status != status_text:
                 await channel.edit(status=status_text)
                 
         except Exception as e:
-            # We use debug here as missing permissions are common and shouldn't spam logs
             log.debug(f"Voice channel status update failed: {e}")
 
     async def _cleanup_stray_messages(self, channel, force=False):
         now = asyncio.get_event_loop().time()
-        if not force and (now - self._last_cleanup < self.config.ui_cleanup_frequency): return 
+        if not force and (now - self._last_cleanup < self.config.ui_cleanup_frequency):
+            return 
         self._last_cleanup = now
 
         try:
-            # IMPORTANT: Use the actual message IDs we are currently holding in memory
-            # This is much safer than re-loading from the DB/file which might be stale
             current_station_id = self.radio.station_message.id if self.radio.station_message else None
             current_player_id = self.radio.now_playing_message.id if self.radio.now_playing_message else None
-            
-            # Search messages are ephemeral or tracked separately
             current_search_id = self.radio.embed_manager.load_message_id("search")
             
             known_ids = {current_station_id, current_player_id, current_search_id}
-            # Remove None values from the set
             known_ids = {id for id in known_ids if id is not None}
             
             log.debug(f"[UI] Cleaning up. Known IDs: {known_ids}")
@@ -149,10 +144,8 @@ class UIManager:
             if to_delete:
                 if len(to_delete) > 1:
                     try:
-                        # Attempt bulk delete (only works for messages < 14 days old)
                         await channel.delete_messages(to_delete)
-                    except:
-                        # Fallback to individual delete if bulk fails
+                    except Exception:
                         for msg in to_delete:
                             await safe_delete_message(msg)
                 else:
@@ -174,7 +167,7 @@ class UIManager:
         if self.radio.station_message:
             try: 
                 await self.radio.station_message.edit(view=view)
-            except: 
+            except Exception: 
                 self.radio.station_message = await channel.send(view=view)
         else:
             self.radio.station_message = await channel.send(view=view)
@@ -182,20 +175,19 @@ class UIManager:
         self.radio.embed_manager.save_message_id("station", self.radio.station_message.id)
 
     async def _render_player_message(self, channel, song, show_player):
-        if not channel: return
+        if not channel:
+            return
         
         if not show_player:
-            # We want to ensure no player message exists
             msg_id = self.radio.embed_manager.load_message_id("player")
             if self.radio.now_playing_message:
                 await safe_delete_message(self.radio.now_playing_message)
                 self.radio.now_playing_message = None
             elif msg_id:
-                # Active attempt to delete stale message from DB
                 m = await safe_fetch_message(channel, msg_id)
-                if m: await safe_delete_message(m)
+                if m:
+                    await safe_delete_message(m)
             
-            # Record that we have no player message anymore
             self.radio.embed_manager.save_message_id("player", None)
             return
 
@@ -209,7 +201,7 @@ class UIManager:
         if self.radio.now_playing_message:
             try:
                 await self.radio.now_playing_message.edit(embed=None, view=player_view)
-            except:
+            except Exception:
                 self.radio.now_playing_message = await channel.send(view=player_view)
         else:
             self.radio.now_playing_message = await channel.send(view=player_view)
@@ -219,17 +211,13 @@ class UIManager:
     async def force_new_embed(self):
         """Immediately clears message IDs and triggers a fresh UI build."""
         async with self._ui_lock:
-            # 1. Immediate state reset in memory
             self.radio.now_playing_message = None
             self.radio.station_message = None
             
-            # 2. Reset IDs in DB so the next update sends NEW messages instead of editing
             self.radio.embed_manager.save_message_id("player", None)
             self.radio.embed_manager.save_message_id("station", None)
             self.radio.embed_manager.save_message_id("search", None)
             
-            # 3. Trigger a full UI update (which will send new messages and then cleanup old ones)
-            # We call the internal method directly to stay within the lock
             await self._update_ui_internal(self.radio.current_song, force_cleanup=True)
 
     async def refresh_all_uis(self):

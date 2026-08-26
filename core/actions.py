@@ -36,4 +36,3 @@ class RadioAction(Enum):
     SHUFFLE = auto()
     RESTART = auto()
     CLEAR_CACHE = auto()
-

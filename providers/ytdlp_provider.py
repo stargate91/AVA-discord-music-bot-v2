@@ -1,13 +1,20 @@
 import asyncio
 import asyncio.subprocess
 import json
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from .base import MusicProvider
-from logger import log
+from utils.logger import log
 
 class YTDLPProvider(MusicProvider):
     def __init__(self, ytdlp_path: str = "yt-dlp"):
         self.ytdlp_path = ytdlp_path
+        self.common_args = [
+            "--socket-timeout", "10",
+            "--no-warnings",
+            "--ignore-errors",
+            "--no-check-certificates",
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ]
 
     def matches(self, query: str) -> bool:
         return query.startswith(("http://", "https://", "www."))
@@ -19,6 +26,7 @@ class YTDLPProvider(MusicProvider):
         return "list=" in query or "playlist" in query.lower() or "/sets/" in query.lower()
 
     async def _resolve_internal(self, url: str, playlist: bool = False) -> Optional[Dict[str, Any]]:
+        process = None
         try:
             referer = "https://soundcloud.com/" if "soundcloud.com" in url else "https://www.google.com"
             cmd = [
@@ -27,8 +35,8 @@ class YTDLPProvider(MusicProvider):
                 "-f", "bestaudio[ext=mp3]/bestaudio/best",
                 "--no-playlist", 
                 "--flat-playlist",
-                "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "--referer", referer,
+                *self.common_args,
                 url
             ]
                  
@@ -37,7 +45,7 @@ class YTDLPProvider(MusicProvider):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await process.communicate()
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=20.0)
             
             if process.returncode != 0:
                 err_msg = stderr.decode(errors="ignore").strip()
@@ -68,21 +76,30 @@ class YTDLPProvider(MusicProvider):
                 "thumbnail_url": info.get("thumbnail"),
                 "is_external": True,
                 "webpage_url": info.get("webpage_url"),
-                "path": url # Keep original URL as path
+                "path": url
             }
+        except asyncio.TimeoutError:
+            log.error(f"[YT-DLP] Resolution timed out for {url}. Killing process.")
+            if process:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+            return None
         except Exception as e:
             log.error(f"[YT-DLP] Exception resolving {url}: {e}")
             return None
 
-    async def resolve_playlist(self, url: str) -> list[Dict[str, Any]]:
+    async def resolve_playlist(self, url: str) -> List[Dict[str, Any]]:
+        process = None
         try:
             referer = "https://soundcloud.com/" if "soundcloud.com" in url else "https://www.google.com"
             cmd = [
                 self.ytdlp_path, 
                 "-j", 
                 "--flat-playlist",
-                "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "--referer", referer,
+                *self.common_args,
                 url
             ]
                  
@@ -91,7 +108,7 @@ class YTDLPProvider(MusicProvider):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await process.communicate()
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
             
             if process.returncode != 0:
                 err_msg = stderr.decode(errors="ignore").strip()
@@ -112,22 +129,32 @@ class YTDLPProvider(MusicProvider):
                         "is_external": True,
                         "webpage_url": info.get("webpage_url") or (f"https://www.youtube.com/watch?v={info['id']}" if info.get('id') else None)
                     })
-                except: continue
+                except Exception:
+                    continue
             return results
+        except asyncio.TimeoutError:
+            log.error(f"[YT-DLP] Playlist fetch timed out for {url}. Killing process.")
+            if process:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+            return []
         except Exception as e:
             log.error(f"[YT-DLP] Playlist resolution exception for {url}: {e}")
             return []
 
-    async def search(self, query: str, limit: int = 5) -> list[Dict[str, Any]]:
+    async def search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        process = None
         try:
-            # use yt_search prefix for actual search
             search_query = f"ytsearch{limit}:{query}"
             cmd = [
                 self.ytdlp_path, 
-                "-j",
+                "-j", 
                 "--flat-playlist",
                 "--no-playlist",
                 "--print-json",
+                *self.common_args,
                 search_query
             ]
             
@@ -136,7 +163,7 @@ class YTDLPProvider(MusicProvider):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await process.communicate()
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=15.0)
             
             results = []
             if stdout:
@@ -152,8 +179,17 @@ class YTDLPProvider(MusicProvider):
                             "thumbnail_url": info.get("thumbnail"),
                             "is_external": True
                         })
-                    except: continue
+                    except Exception:
+                        continue
             return results
+        except asyncio.TimeoutError:
+            log.error(f"[YT-DLP] Search timed out for query '{query}'. Killing process.")
+            if process:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+            return []
         except Exception as e:
             log.error(f"[YT-DLP] Search exception for {query}: {e}")
             return []

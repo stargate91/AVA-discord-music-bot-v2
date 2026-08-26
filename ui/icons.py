@@ -48,7 +48,6 @@ class Icons:
     @classmethod
     def setup(cls, config):
         """Initializes all icons from config or hardcoded defaults."""
-        # --- Hardcoded Unicode Defaults (Classic Fallback) ---
         defaults = {
             "SUCCESS": "✅", "GEAR": "⚙️", "RADIO": "📻", "HELP": "❓", "SWEEP": "🧹",
             "MOVE_DOWN": "🔽", "PREV": "◀️", "NEXT": "▶️", "MOVE_UP": "🔼", "SEEK": "⏩",
@@ -65,13 +64,11 @@ class Icons:
         provided_data = config.emojis if hasattr(config, "emojis") else {}
         
         def get(name):
-            # Check provided config first. If missing or empty string, use hardcoded defaults.
             val = provided_data.get(name)
             if not val:
                 val = defaults.get(name, "❓")
             return discord.PartialEmoji.from_str(val)
 
-        # Initialize all class properties
         cls.SUCCESS = get("SUCCESS")
         cls.ADD = get("ADD")
         cls.BACK = get("BACK")
@@ -116,6 +113,7 @@ class Icons:
         cls.PB_RIGHT = get("PB_RIGHT")
         cls.PB_END = get("PB_END")
 
-# Default initialization
-class DefaultConfig: emojis = {}
+class DefaultConfig:
+    emojis = {}
+
 Icons.setup(DefaultConfig())

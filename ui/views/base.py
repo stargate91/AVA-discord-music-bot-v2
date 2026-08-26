@@ -1,14 +1,12 @@
 import discord
 import traceback
 from discord.ui import LayoutView
-from ui_icons import Icons
-from ui_translate import t
-from ui_utils import get_feedback
-from logger import log
+from ui.icons import Icons
+from ui.i18n import t
+from ui.utils import get_feedback, delayed_delete
+from utils.logger import log
+import asyncio
 
-# This is a "Decorator". It's like a wrapper around other functions.
-# We use it to catch errors in button clicks so the bot doesn't crash, 
-# and also to check if the user is in the same voice channel as the bot.
 def handle_ui_error(func):
     """Decorator to handle errors in UI callbacks and enforce permissions."""
     async def wrapper(*args, **kwargs):
@@ -16,35 +14,26 @@ def handle_ui_error(func):
         if not interaction:
             return await func(*args, **kwargs)
 
-        # Enforce permission check
-        # Usually, component callbacks are methods: (self, interaction)
-        # We check if self has a 'radio' attribute
         self_obj = args[0] if args else None
         radio = getattr(self_obj, 'radio', None)
         
         if radio and hasattr(radio, 'can_interact'):
             if not radio.can_interact(interaction.user):
-                # We need to import t inside to avoid circular imports or missing refs
-                # but it's already at top level. Let's use it.
                 feedback = get_feedback('not_in_same_voice')
                 if not interaction.response.is_done():
                     await interaction.response.send_message(feedback, ephemeral=True)
                 else:
                     await interaction.followup.send(feedback, ephemeral=True)
                 
-                # Auto-delete error notification
-                from ui_utils import delayed_delete
-                import asyncio
                 asyncio.create_task(delayed_delete(interaction, radio.config.notification_timeout))
                 return
 
         try:
             return await func(*args, **kwargs)
         except (discord.errors.NotFound, discord.errors.HTTPException) as e:
-            # Handle known noise errors
             code = getattr(e, 'code', 0)
             if code in [10062, 40060]: 
-                return # Silent ignore for these
+                return
             
             log.error(f"UI Error in {func.__name__}: {e}")
             await _send_error_msg(interaction)
@@ -55,24 +44,24 @@ def handle_ui_error(func):
     return wrapper
 
 async def _send_error_msg(interaction):
-    if not interaction: return
+    if not interaction:
+        return
     feedback = get_feedback('error_generic')
     try:
         if not interaction.response.is_done():
             await interaction.response.send_message(feedback, ephemeral=True)
         else:
             await interaction.followup.send(feedback, ephemeral=True)
-    except:
-        pass # Final line of defense
+    except Exception:
+        pass
 
-# This is the "Father" class for all our screens. 
-# It makes sure every view has access to the radio object.
 class BaseView(LayoutView):
     """Base class for all Radio Bot views with shared logic."""
 
     def __init__(self, radio, timeout=None):
         super().__init__(timeout=timeout)
         self.radio = radio
+
     async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
         log.error(f"View Error: {error} in {item}")
         traceback.print_exc()
@@ -87,8 +76,6 @@ class BaseView(LayoutView):
         except Exception as e:
             log.error(f"Error in View.on_error: {e}")
 
-# This is a special view for lists (like the Queue or History).
-# It can split a long list into multiple "pages" that you can flip through.
 class PaginatedView(BaseView):
     """Base class for views requiring pagination."""
 

@@ -7,15 +7,11 @@ class HistoryManager:
     def __init__(self, db: Database, max_size: int = 50):
         self.db = db
         self.max_size = max_size
-        # No local 'history' list, we fetch from DB when needed to keep it synced
-        # But for performance in view we can still keep it cache if we want
-        # However, the user wants 'everything in .db', so let's rely on DB.
 
     def add(self, song: Song):
         if not song or not song.path:
             return
             
-        # Set timestamp if not set
         if not song.played_at:
             song.played_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         

@@ -22,12 +22,10 @@ class FavoriteManager:
             return False
         else:
             self.db.add_favorite(u_id, song)
-            # Verify if it was actually added before returning True
             if self.db.is_favorite(u_id, song.path):
-                # Support fast playback from library by auto-caching
                 self.db.set_cache(
                     url=song.path,
-                    title=song.title,
+                    title=song.title or "",
                     uploader=song.uploader or "Unknown",
                     duration=song.duration,
                     thumbnail_url=song.thumbnail_url or ""

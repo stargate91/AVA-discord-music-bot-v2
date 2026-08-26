@@ -1,0 +1,254 @@
+import discord
+import asyncio
+from typing import Optional, List
+from ui.icons import Icons
+from ui.i18n import t
+from ui.utils import respond, get_feedback
+from ui.views.base import handle_ui_error
+from core.actions import RadioAction, RadioState
+from core.models import Song
+from utils.logger import log
+
+class SearchResultAddButton(discord.ui.Button):
+    def __init__(self, radio, result: Song):
+        super().__init__(emoji=Icons.ADD, style=discord.ButtonStyle.secondary)
+        self.radio = radio
+        self.result = result
+
+    @handle_ui_error
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        self.radio.dispatch(RadioAction.ADD_EXT_LINK, self.result.path, user=interaction.user)
+        await respond(interaction, get_feedback("weblink_added"), delete_after=self.radio.config.notification_timeout)
+
+class FavoriteListButton(discord.ui.Button):
+    def __init__(self, radio, song: Song, user_id: Optional[int] = None):
+        as_fav = False
+        if user_id:
+            as_fav = radio.fav_manager.is_favorite(user_id, song)
+            
+        emoji = Icons.HEART_MINUS if as_fav else Icons.HEART_PLUS
+        super().__init__(emoji=emoji, style=discord.ButtonStyle.secondary)
+        self.radio = radio
+        self.song = song
+
+    @handle_ui_error
+    async def callback(self, interaction: discord.Interaction):
+        is_fav_now = self.radio.fav_manager.is_favorite(interaction.user.id, self.song)
+        will_be_added = not is_fav_now
+
+        self.radio.dispatch(RadioAction.TOGGLE_FAVORITE, (interaction.user.id, self.song), user=interaction.user)
+        
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        try:
+            if hasattr(self.view, 'refresh_view'):
+                await self.view.refresh_view(interaction)
+            else:
+                await interaction.edit_original_response(view=self.view)
+        except Exception as e:
+            log.debug(f"[UI] Favorite refresh failed: {e}")
+
+        key = "added_to_fav" if will_be_added else "removed_from_fav"
+        await respond(interaction, get_feedback(key), delete_after=self.radio.config.notification_timeout)
+
+class FavoriteRemoveButton(discord.ui.Button):
+    def __init__(self, radio, song: Song):
+        super().__init__(emoji=Icons.REMOVE, style=discord.ButtonStyle.secondary)
+        self.radio = radio
+        self.song = song
+
+    @handle_ui_error
+    async def callback(self, interaction: discord.Interaction):
+        self.radio.fav_manager.toggle_favorite(interaction.user.id, self.song)
+        await interaction.response.defer(ephemeral=True)
+        if hasattr(self.view, 'refresh_view'):
+            await self.view.refresh_view(interaction)
+        await respond(interaction, get_feedback('removed_from_fav'), delete_after=self.radio.config.notification_timeout)
+
+class LibraryButton(discord.ui.Button):
+    def __init__(self, radio, custom_id="library_button"):
+        super().__init__(
+            label=None if radio.is_compact else t('library_label'),
+            emoji=Icons.FOLDER_HEART,
+            style=discord.ButtonStyle.secondary,
+            custom_id=custom_id
+        )
+        self.radio = radio
+
+    @handle_ui_error
+    async def callback(self, interaction: discord.Interaction):
+        from ui.views.favorites import FavoritesView
+        view = FavoritesView(self.radio, interaction.user.id)
+        await interaction.response.send_message(view=view, ephemeral=True)
+
+class AddAllFavoritesButton(discord.ui.Button):
+    def __init__(self, radio, songs: List[Song]):
+        super().__init__(
+            label=t("add_all_to_queue"),
+            emoji=Icons.QUEUE,
+            style=discord.ButtonStyle.secondary
+        )
+        self.radio = radio
+        self.songs = songs
+
+    @handle_ui_error
+    async def callback(self, interaction: discord.Interaction):
+        if not self.radio.can_interact(interaction.user):
+            await interaction.response.send_message(get_feedback("not_in_same_voice"), ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        
+        q_songs = []
+        for song in self.songs:
+            q_song = Song.from_dict(song.to_dict())
+            q_song.requested_by = interaction.user.display_name
+            q_songs.append(q_song)
+        
+        if self.radio.voice_channel_id is None:
+            if not interaction.user.voice:
+                await interaction.followup.send(get_feedback("no_permission"), ephemeral=True)
+                return
+            self.radio.dispatch(RadioAction.JOIN, interaction.user.voice.channel.id, user=interaction.user)
+
+        self.radio.dispatch(RadioAction.ADD_SONGS, q_songs, user=interaction.user)
+        await respond(interaction, get_feedback('added_all_to_queue'), delete_after=self.radio.config.notification_timeout)
+
+class ClearFavoritesButton(discord.ui.Button):
+    def __init__(self, radio, user_id: str | int):
+        super().__init__(
+            label=t("clear_favorites"),
+            emoji=Icons.SWEEP,
+            style=discord.ButtonStyle.secondary
+        )
+        self.radio = radio
+        self.user_id = user_id
+
+    @handle_ui_error
+    async def callback(self, interaction: discord.Interaction):
+        self.radio.dispatch(RadioAction.CLEAR_FAVORITES, self.user_id, user=interaction.user)
+        await interaction.response.defer()
+        if hasattr(self.view, 'refresh_view'):
+            self.view.current_page = 0
+            self.view.data_list = []
+            await self.view.refresh_view(interaction)
+            
+        await respond(interaction, get_feedback('cleared_favorites'), delete_after=self.radio.config.notification_timeout)
+
+class HistoryButton(discord.ui.Button):
+    def __init__(self, radio, custom_id="history_button"):
+        super().__init__(
+            label=None if radio.is_compact else t('history_label'),
+            emoji=Icons.HISTORY,
+            style=discord.ButtonStyle.secondary,
+            custom_id=custom_id
+        )
+        self.radio = radio
+
+    @handle_ui_error
+    async def callback(self, interaction: discord.Interaction):
+        from ui.views.history import HistoryView
+        view = HistoryView(self.radio, user=interaction.user)
+        await interaction.response.send_message(view=view, ephemeral=True)
+
+class ClearHistoryButton(discord.ui.Button):
+    def __init__(self, radio):
+        super().__init__(
+            label=t("clear_history_label"), 
+            emoji=Icons.SWEEP, 
+            style=discord.ButtonStyle.secondary
+        )
+        self.radio = radio
+
+    @handle_ui_error
+    async def callback(self, interaction: discord.Interaction):
+        if not self.radio.is_admin(interaction.user):
+            await interaction.response.send_message(get_feedback("admin_only"), ephemeral=True)
+            return
+
+        self.radio.dispatch(RadioAction.CLEAR_HISTORY, user=interaction.user)
+        await interaction.response.defer()
+        if hasattr(self.view, 'refresh_view'):
+            self.view.current_page = 0
+            self.view.data_list = []
+            await self.view.refresh_view(interaction)
+        
+        await respond(interaction, get_feedback("cleared_history"), delete_after=self.radio.config.notification_timeout)
+
+class QueueViewButton(discord.ui.Button):
+    def __init__(self, radio):
+        is_idle_empty = (radio.status == RadioState.IDLE) and (not radio.queue)
+        super().__init__(
+            label=None if radio.is_compact else t('queue_label'), 
+            emoji=Icons.QUEUE, 
+            style=discord.ButtonStyle.secondary, 
+            custom_id="full_queue_view",
+            disabled=is_idle_empty
+        )
+        self.radio = radio
+
+    @handle_ui_error
+    async def callback(self, interaction: discord.Interaction):
+        from ui.views.queue import FullQueueView
+        view = FullQueueView(self.radio, page=0, user=interaction.user)
+        await interaction.response.send_message(view=view, ephemeral=True)
+
+class RemoveFromQueueButton(discord.ui.Button):
+    def __init__(self, radio, song: Song):
+        super().__init__(emoji=Icons.REMOVE, style=discord.ButtonStyle.secondary)
+        self.radio = radio
+        self.song = song
+
+    @handle_ui_error
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        self.radio.dispatch(RadioAction.REMOVE_FROM_QUEUE, self.song, user=interaction.user)
+        if self.song in self.radio.queue:
+            self.radio.queue.remove(self.song)
+            
+        if hasattr(self.view, 'refresh_view'):
+            await self.view.refresh_view(interaction)
+
+class ClearQueueButton(discord.ui.Button):
+    def __init__(self, radio):
+        super().__init__(label=t("clear_queue_label"), emoji=Icons.SWEEP, style=discord.ButtonStyle.secondary)
+        self.radio = radio
+
+    @handle_ui_error
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        self.radio.dispatch(RadioAction.CLEAR_QUEUE, user=interaction.user)
+        self.radio.queue = []
+        if hasattr(self.view, 'refresh_view'):
+            self.view.current_page = 0
+            await self.view.refresh_view(interaction)
+
+class MoveUpButton(discord.ui.Button):
+    def __init__(self, radio, song: Song, is_first: bool = False):
+        super().__init__(emoji=Icons.MOVE_UP, style=discord.ButtonStyle.secondary, disabled=is_first)
+        self.radio = radio
+        self.song = song
+
+    @handle_ui_error
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        self.radio.dispatch(RadioAction.MOVE_SONG, (self.song, -1), user=interaction.user)
+        await asyncio.sleep(0.1)
+        if hasattr(self.view, 'refresh_view'):
+            await self.view.refresh_view(interaction)
+
+class MoveDownButton(discord.ui.Button):
+    def __init__(self, radio, song: Song, is_last: bool = False):
+        super().__init__(emoji=Icons.MOVE_DOWN, style=discord.ButtonStyle.secondary, disabled=is_last)
+        self.radio = radio
+        self.song = song
+
+    @handle_ui_error
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        self.radio.dispatch(RadioAction.MOVE_SONG, (self.song, 1), user=interaction.user)
+        await asyncio.sleep(0.1)
+        if hasattr(self.view, 'refresh_view'):
+            await self.view.refresh_view(interaction)

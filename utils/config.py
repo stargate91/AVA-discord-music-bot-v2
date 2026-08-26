@@ -96,8 +96,9 @@ class Config:
     @property
     def ephemeral_cache(self): return self.defaults.get("ephemeral_cache", False)
 
-def load_config(config_file: str = "config.json", instance_name: str = ""):
-    config_dir = os.path.join(os.path.dirname(__file__), "configs")
+def load_config(config_file: str = "config.json", instance_name: str = "") -> Config:
+    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    config_dir = os.path.join(root_dir, "configs")
     
     # env file logic: check configs/ directory first
     env_name = f"{instance_name}.env" if instance_name else ".env"
@@ -105,7 +106,7 @@ def load_config(config_file: str = "config.json", instance_name: str = ""):
     
     # Fallback to root for backwards compatibility if not found in configs/
     if not os.path.exists(env_path):
-        root_env = os.path.join(os.path.dirname(__file__), env_name)
+        root_env = os.path.join(root_dir, env_name)
         if os.path.exists(root_env):
             env_path = root_env
 
@@ -117,9 +118,9 @@ def load_config(config_file: str = "config.json", instance_name: str = ""):
     else:
         # Check in configs/ folder first
         base_path = os.path.join(config_dir, config_file)
-        # Fallback to current folder if it doesn't exist in configs but exists here
+        # Fallback to current folder if it doesn't exist in configs but exists in root
         if not os.path.exists(base_path):
-            fallback_path = os.path.join(os.path.dirname(__file__), config_file)
+            fallback_path = os.path.join(root_dir, config_file)
             if os.path.exists(fallback_path):
                 base_path = fallback_path
 

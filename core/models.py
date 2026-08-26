@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 
@@ -18,11 +19,19 @@ class Song:
     is_resolving: bool = False
     is_external: bool = False
     stream_url: Optional[str] = None
+    _resolve_event: Optional[asyncio.Event] = field(default=None, repr=False, compare=False)
+
+    @property
+    def resolve_event(self) -> asyncio.Event:
+        if self._resolve_event is None:
+            self._resolve_event = asyncio.Event()
+            if not self.is_resolving:
+                self._resolve_event.set()
+        return self._resolve_event
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Song":
         """Factory method to create a Song object from a dictionary."""
-        # Normalize uploader/artist
         uploader = data.get("uploader") or data.get("artist") or data.get("channel")
         
         return cls(
@@ -43,18 +52,18 @@ class Song:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert back to dict."""
-        return self.__dict__
+        d = dict(self.__dict__)
+        d.pop("_resolve_event", None)
+        return d
     
     def update(self, data: Dict[str, Any]):
         """Update fields from a dictionary with priority mapping."""
         # 1. Direct field mapping
         for key, value in data.items():
-            if hasattr(self, key) and value is not None:
-                # Always overwrite if current is placeholder, None or we are resolving
+            if hasattr(self, key) and value is not None and key != "_resolve_event":
                 current = getattr(self, key)
                 is_placeholder = False
                 if isinstance(current, str):
-                    # Robust check for placeholders like [Processing...]
                     is_placeholder = current in ["...", ""] or (current.startswith("[") and "]" in current)
                 
                 if current in [None, 0] or is_placeholder or self.is_resolving or key == "stream_url":
@@ -69,3 +78,6 @@ class Song:
         new_path = data.get("path") or data.get("url")
         if new_path and (self.path in [None, ""]):
             self.path = new_path
+
+        if not self.is_resolving and self._resolve_event is not None:
+            self._resolve_event.set()

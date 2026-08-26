@@ -1,6 +1,6 @@
 # 🎵 DC Radio Bot - Professional Discord Audio System
 
-A highly modular, professional Discord music bot built with **discord.py**, featuring a premium interactive UI, robust playback engine, and a standardized feedback system.
+A highly modular, enterprise-grade Discord music bot built with **discord.py**, featuring a modern interactive UI, robust playback engine, and a standardized feedback system.
 
 ---
 
@@ -44,28 +44,79 @@ pip install -r requirements.txt
 
 ## 📂 Project Architecture
 
-The project follows a modular, action-dispatched architecture for maximum stability:
+The project follows a clean, layered, modular architecture:
 
-- **`main.py`**: Entry point and Discord bot initialization.
-- **`player_engine.py`**: The playback brain. Handles FFmpeg streaming and navigation logic.
-- **`config_loader.py`**: Handles JSON and Environment variable merging for multi-instance support.
-- **`core/`**:
-  - `radio.py`: The `RadioManager` - orchestrates State, Queue, and Action dispatching.
-  - `database.py`: SQLite persistence layer (Cache, History, Favorites).
-- **`ui_*.py`**: Modular UI & Logic components.
-  - `ui_player.py`: The main Now Playing controller and player views.
-  - `ui_search.py`: YouTube search modals and Library management.
-  - `ui_icons.py`: Centralized icon registry with fallback logic.
-  - `ui_utils.py`: Standardized UI helpers (feedback mapping, safe deletion).
-  - `ui_translate.py`: Localization engine (i18n).
-- **`locales/`**: JSON-based translation files for all user-facing text.
+```
+dc_radio_bot/
+├── configs/                     # Configuration files (.json, .env)
+├── locales/                     # Localization files (hu.json, en.json)
+├── data/                        # SQLite database and audio cache
+│
+├── core/                        # State, domain models & action dispatching
+│   ├── actions.py               # RadioAction and RadioState enums
+│   ├── models.py                # Song dataclass
+│   ├── state.py                 # RadioManager state coordinator
+│   ├── embed_state.py           # EmbedStateManager
+│   └── database.py              # SQLite storage engine
+│
+├── services/                    # Backend business services
+│   ├── audio_player.py          # RadioPlayer (FFmpeg streaming & voice loop)
+│   ├── cache_service.py         # CacheService (yt-dlp download & LRU cleanup)
+│   ├── permissions.py           # PermissionService (role & channel checks)
+│   ├── favorites.py             # FavoriteManager
+│   └── history.py               # HistoryManager
+│
+├── providers/                   # Media metadata & stream resolvers
+│   ├── base.py                  # BaseProvider interface
+│   └── ytdlp_provider.py        # YouTube / SoundCloud extractor
+│
+├── ui/                          # User interface components & views
+│   ├── manager.py               # UIManager (controller coordinator)
+│   ├── icons.py                 # Centralized icon registry & fallback logic
+│   ├── theme.py                 # Theme color tokens
+│   ├── i18n.py                  # Localization engine (t())
+│   ├── utils.py                 # UI feedback, delay delete, duration helpers
+│   ├── components/              # Modular UI elements
+│   │   ├── progress_bar.py      # Dynamic progress bar builder
+│   │   ├── player_controls.py   # Playback, volume, channel & style controls
+│   │   └── list_controls.py     # Queue management, favorites & history controls
+│   ├── views/                   # Interactive Discord Views
+│   │   ├── base.py              # BaseView, PaginatedView, handle_ui_error
+│   │   ├── player.py            # NowPlayingView, FrequencyStationView, WelcomeLayout
+│   │   ├── queue.py             # FullQueueView
+│   │   ├── favorites.py         # FavoritesView
+│   │   ├── history.py           # HistoryView
+│   │   └── search_results.py    # SearchResultsView
+│   └── modals/                  # Interactive Modals
+│       ├── search.py            # SearchModal
+│       ├── weblink.py           # WebLinkModal
+│       ├── volume.py            # VolumeModal
+│       └── seek.py              # SeekModal
+│
+├── cogs/                        # Discord.py Extensions & Commands
+│   ├── playback.py              # /play, /pause, /stop, /skip, /back, /seek
+│   ├── queue.py                 # /queue, /loop, /loopq, /shuffle
+│   ├── radio.py                 # /join, /disconnect, /volume
+│   ├── admin.py                 # /clearcache, /restart
+│   ├── events.py                # Gateway events & voice state updates
+│   └── prefix_commands.py       # Traditional text prefix commands handler
+│
+├── utils/                       # Utility packages
+│   ├── logger.py                # Colored terminal logger
+│   └── config.py                # Configuration loader & dataclass
+│
+├── bot.py                       # RadioBot (commands.Bot subclass)
+└── main.py                      # Application entry point & CLI parser
+```
 
 ---
 
 ## 🛠️ Engineering Principles
 
 - **Action Dispatcher Pattern**: All state changes are driven by `RadioAction` enums, ensuring predictable and traceable behavior.
-- **Decoupled Design**: The UI and Playback Engine are strictly separated; the UI only reflects the State and dispatches Actions.
+- **Decoupled Design**: The UI, Audio Player, and State Manager are strictly separated; the UI only reflects the State and dispatches Actions.
+- **Modular Cogs**: Commands and events are organized into self-contained Discord.py Cogs.
+- **Single Responsibility UI**: Views, modals, and interactive buttons are split into dedicated, reusable components.
 - **Automatic Cleanup**: Intelligent monitoring (`_cleanup_stray_messages`) keeps the radio channel clean by sweeping old controllers.
 
 ---
@@ -74,4 +125,3 @@ The project follows a modular, action-dispatched architecture for maximum stabil
 Found a bug? Have a feature request? Feel free to open an issue or submit a pull request! 🐛
 
 Made with ❤️ for the Discord community.
-
