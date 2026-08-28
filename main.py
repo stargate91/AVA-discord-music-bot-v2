@@ -29,7 +29,7 @@ async def main():
     
     try:
         config = load_config(config_file, instance_name=instance_name)
-        setup_logging(config.log_level)
+        setup_logging(config.log_level, instance_name=instance_name)
     except FileNotFoundError:
         print(f"Error: Configuration file '{config_file}' not found.")
         sys.exit(1)

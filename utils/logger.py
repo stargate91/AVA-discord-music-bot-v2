@@ -20,27 +20,32 @@ class ColoredFormatter(logging.Formatter):
         return super().format(record)
 
 log = logging.getLogger("RadioBot")
+_console_handler_added = False
 
-def setup_logging(level_name: str = "INFO"):
+def setup_logging(level_name: str = "INFO", instance_name: str = ""):
+    global _console_handler_added
     level = getattr(logging, level_name.upper(), logging.INFO)
     log.setLevel(level)
 
-# Ensure data directory exists
-os.makedirs("data", exist_ok=True)
+    os.makedirs("data", exist_ok=True)
+    inst = instance_name or os.getenv("INSTANCE_NAME", "")
+    target_log_file = f"data/{inst}_radio.log" if inst else "data/radio.log"
 
-# Support multiple instances via environment variable
-instance_name = os.getenv("INSTANCE_NAME", "")
-log_filename = f"data/{instance_name}_radio.log" if instance_name else "data/radio.log"
+    # Remove existing FileHandlers
+    for h in list(log.handlers):
+        if isinstance(h, logging.FileHandler):
+            log.removeHandler(h)
+            h.close()
 
-# File Handler - Only add if NOT being managed by an external process that redirects logs
-if not os.getenv("MANAGED_LOGGING"):
-    file_handler = logging.FileHandler(log_filename, encoding="utf-8")
-    file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-    log.addHandler(file_handler)
-else:
-    log.debug(f"[LOGGER] Managed logging active. Skipping FileHandler for {log_filename}")
+    # Add specific FileHandler
+    if not os.getenv("MANAGED_LOGGING"):
+        file_handler = logging.FileHandler(target_log_file, encoding="utf-8")
+        file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        log.addHandler(file_handler)
 
-# Console Handler
-console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setFormatter(ColoredFormatter("%(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S"))
-log.addHandler(console_handler)
+    # Add Console Handler once
+    if not _console_handler_added:
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(ColoredFormatter("%(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S"))
+        log.addHandler(console_handler)
+        _console_handler_added = True

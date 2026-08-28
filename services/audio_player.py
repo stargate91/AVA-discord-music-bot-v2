@@ -408,8 +408,14 @@ class RadioPlayer:
             before_opts_list.append(f"-ss {self.radio.track_start_offset}")
              
         if is_url:
-            if user_agent:
-                before_opts_list.append(f"-user_agent \"{user_agent}\"")
+            ua = None
+            if song and song.http_headers and "User-Agent" in song.http_headers:
+                ua = song.http_headers["User-Agent"]
+            elif user_agent:
+                ua = user_agent
+
+            if ua:
+                before_opts_list.append(f"-user_agent \"{ua}\"")
             if reconnect_opts:
                 before_opts_list.append(reconnect_opts)
             

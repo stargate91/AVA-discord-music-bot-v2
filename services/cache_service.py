@@ -90,6 +90,9 @@ class CacheService:
                     *self._get_ytdlp_cmd(),
                     "-f", "bestaudio/best",
                     "--no-playlist",
+                    "--no-check-certificates",
+                    "--no-update",
+                    "--extractor-args", "youtube:player_client=android,web",
                     "-o", target_path_template,
                     song.path
                 ]

@@ -19,6 +19,7 @@ class Song:
     is_resolving: bool = False
     is_external: bool = False
     stream_url: Optional[str] = None
+    http_headers: Optional[Dict[str, str]] = None
     _resolve_event: Optional[asyncio.Event] = field(default=None, repr=False, compare=False)
 
     @property
@@ -47,6 +48,7 @@ class Song:
             is_resolving=data.get("is_resolving", False),
             is_external=data.get("is_external", False),
             stream_url=data.get("stream_url"),
+            http_headers=data.get("http_headers"),
             played_at=data.get("played_at")
         )
 

@@ -15,6 +15,8 @@ class YTDLPProvider(MusicProvider):
             "--no-warnings",
             "--ignore-errors",
             "--no-check-certificates",
+            "--no-update",
+            "--extractor-args", "youtube:player_client=android,web",
             "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         ]
 
@@ -81,6 +83,7 @@ class YTDLPProvider(MusicProvider):
                 "duration": int(info.get("duration", 0)),
                 "stream_url": stream_url,
                 "thumbnail_url": info.get("thumbnail"),
+                "http_headers": info.get("http_headers", {}),
                 "is_external": True,
                 "webpage_url": info.get("webpage_url"),
                 "path": url
