@@ -276,7 +276,10 @@ class RadioPlayer:
                 await self.radio.start_cache_download(song)
                 
         if not source_path:
+            log.error(f"[PLAYER] Could not resolve playable audio source for: {song.title if song else 'Unknown'}")
             self.radio.current_song = None
+            self.radio.status = RadioState.IDLE
+            await self.update_ui(None)
             return
 
         self.history_recorded = False

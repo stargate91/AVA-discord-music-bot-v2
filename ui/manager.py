@@ -162,7 +162,11 @@ class UIManager:
         if not self.radio.station_message:
             msg_id = self.radio.embed_manager.load_message_id("station")
             if msg_id:
-                self.radio.station_message = await safe_fetch_message(channel, msg_id)
+                fetched = await safe_fetch_message(channel, msg_id)
+                if fetched and fetched.author.id == self.bot.user.id:
+                    self.radio.station_message = fetched
+                else:
+                    self.radio.station_message = None
             
         if self.radio.station_message:
             try: 
@@ -181,11 +185,12 @@ class UIManager:
         if not show_player:
             msg_id = self.radio.embed_manager.load_message_id("player")
             if self.radio.now_playing_message:
-                await safe_delete_message(self.radio.now_playing_message)
+                if self.radio.now_playing_message.author.id == self.bot.user.id:
+                    await safe_delete_message(self.radio.now_playing_message)
                 self.radio.now_playing_message = None
             elif msg_id:
                 m = await safe_fetch_message(channel, msg_id)
-                if m:
+                if m and m.author.id == self.bot.user.id:
                     await safe_delete_message(m)
             
             self.radio.embed_manager.save_message_id("player", None)
@@ -196,7 +201,11 @@ class UIManager:
         if not self.radio.now_playing_message:
             msg_id = self.radio.embed_manager.load_message_id("player")
             if msg_id:
-                self.radio.now_playing_message = await safe_fetch_message(channel, msg_id)
+                fetched = await safe_fetch_message(channel, msg_id)
+                if fetched and fetched.author.id == self.bot.user.id:
+                    self.radio.now_playing_message = fetched
+                else:
+                    self.radio.now_playing_message = None
             
         if self.radio.now_playing_message:
             try:

@@ -18,9 +18,10 @@ class RadioManager:
     Central state coordinator and action dispatcher for the Radio Bot.
     Decoupled from direct audio streaming and UI rendering.
     """
-    def __init__(self, config):
+    def __init__(self, config, instance_name: str = ""):
         self.config = config
-        self.embed_manager = EmbedStateManager()
+        self.instance_name = instance_name
+        self.embed_manager = EmbedStateManager(instance_name=instance_name)
         self.providers = get_providers(config)
         
         # Persistence & Services

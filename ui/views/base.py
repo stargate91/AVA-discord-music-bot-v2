@@ -14,6 +14,11 @@ def handle_ui_error(func):
         if not interaction:
             return await func(*args, **kwargs)
 
+        # Ignore interactions on messages authored by another bot instance
+        if interaction.message and interaction.client and interaction.client.user:
+            if interaction.message.author.id != interaction.client.user.id:
+                return
+
         self_obj = args[0] if args else None
         radio = getattr(self_obj, 'radio', None)
         

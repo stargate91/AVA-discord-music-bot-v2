@@ -33,7 +33,7 @@ class RadioBot(commands.Bot):
         )
 
         # Core State & Services
-        self.radio = RadioManager(config)
+        self.radio = RadioManager(config, instance_name=instance_name)
         
         # Clear ephemeral cache on startup if enabled
         if config.ephemeral_cache:

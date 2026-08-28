@@ -1,6 +1,8 @@
 import asyncio
 import asyncio.subprocess
 import json
+import shutil
+import sys
 from typing import Optional, Dict, Any, List
 from .base import MusicProvider
 from utils.logger import log
@@ -16,6 +18,12 @@ class YTDLPProvider(MusicProvider):
             "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         ]
 
+    def _get_exec_cmd(self) -> List[str]:
+        """Returns the appropriate command list to run yt-dlp across Linux and Windows."""
+        if shutil.which(self.ytdlp_path):
+            return [self.ytdlp_path]
+        return [sys.executable, "-m", "yt_dlp"]
+
     def matches(self, query: str) -> bool:
         return query.startswith(("http://", "https://", "www."))
 
@@ -30,11 +38,10 @@ class YTDLPProvider(MusicProvider):
         try:
             referer = "https://soundcloud.com/" if "soundcloud.com" in url else "https://www.google.com"
             cmd = [
-                self.ytdlp_path, 
+                *self._get_exec_cmd(), 
                 "-j", 
                 "-f", "bestaudio[ext=mp3]/bestaudio/best",
-                "--no-playlist", 
-                "--flat-playlist",
+                "--no-playlist",
                 "--referer", referer,
                 *self.common_args,
                 url
@@ -95,7 +102,7 @@ class YTDLPProvider(MusicProvider):
         try:
             referer = "https://soundcloud.com/" if "soundcloud.com" in url else "https://www.google.com"
             cmd = [
-                self.ytdlp_path, 
+                *self._get_exec_cmd(), 
                 "-j", 
                 "--flat-playlist",
                 "--referer", referer,
@@ -149,7 +156,7 @@ class YTDLPProvider(MusicProvider):
         try:
             search_query = f"ytsearch{limit}:{query}"
             cmd = [
-                self.ytdlp_path, 
+                *self._get_exec_cmd(), 
                 "-j", 
                 "--flat-playlist",
                 "--no-playlist",

@@ -1,6 +1,7 @@
 import asyncio
 import os
 import sys
+import re
 import argparse
 from utils.config import load_config
 from utils.logger import log, setup_logging
@@ -15,19 +16,25 @@ def parse_arguments():
 async def main():
     args = parse_arguments()
     
-    if args.instance:
-        os.environ["INSTANCE_NAME"] = args.instance
+    instance_name = args.instance
+    if not instance_name and args.config:
+        m = re.search(r"config([a-zA-Z0-9_-]+)\.json", args.config)
+        if m:
+            instance_name = m.group(1)
+    
+    if instance_name:
+        os.environ["INSTANCE_NAME"] = instance_name
 
-    config_file = args.config if args.config else (f"config{args.instance}.json" if args.instance else "config.json")
+    config_file = args.config if args.config else (f"config{instance_name}.json" if instance_name else "config.json")
     
     try:
-        config = load_config(config_file, instance_name=args.instance)
+        config = load_config(config_file, instance_name=instance_name)
         setup_logging(config.log_level)
     except FileNotFoundError:
         print(f"Error: Configuration file '{config_file}' not found.")
         sys.exit(1)
 
-    bot = RadioBot(config, instance_name=args.instance)
+    bot = RadioBot(config, instance_name=instance_name)
     
     try:
         async with bot:

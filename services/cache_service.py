@@ -3,6 +3,8 @@ import time
 import glob
 import hashlib
 import asyncio
+import shutil
+import sys
 from typing import Optional
 from core.models import Song
 from core.database import Database
@@ -15,6 +17,13 @@ class CacheService:
         self.cache_dir = os.path.join(os.getcwd(), "data", "cache")
         os.makedirs(self.cache_dir, exist_ok=True)
         self._download_lock = asyncio.Lock()
+
+    def _get_ytdlp_cmd(self) -> list[str]:
+        """Returns executable command for yt-dlp on Linux and Windows."""
+        ytdlp = getattr(self.config, 'ytdlp_path', 'yt-dlp')
+        if shutil.which(ytdlp):
+            return [ytdlp]
+        return [sys.executable, "-m", "yt_dlp"]
 
     def get_cache_path(self, song: Song) -> Optional[str]:
         """Returns the local file path if a cached file exists for this song."""
@@ -78,7 +87,7 @@ class CacheService:
             
             try:
                 cmd = [
-                    self.config.ytdlp_path,
+                    *self._get_ytdlp_cmd(),
                     "-f", "bestaudio/best",
                     "--no-playlist",
                     "-o", target_path_template,
