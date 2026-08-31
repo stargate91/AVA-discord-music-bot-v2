@@ -12,6 +12,16 @@ An asynchronous, high-performance Discord music and radio bot built with discord
 
 ---
 
+## Interface Preview
+
+<p align="center">
+  <img src="https://i.imgur.com/clbaTzy.png" alt="AVA-ZEA Radio Player Interface" width="650"/>
+  <br/><br/>
+  <img src="https://i.imgur.com/E8sL6OR.png" alt="AVA-ZEA Queue and Settings View" width="650"/>
+</p>
+
+---
+
 ## Features
 
 - Interactive Discord UI: Control playback, queue navigation, volume, search, history, and favorites through Discord buttons, select menus, and modals.
