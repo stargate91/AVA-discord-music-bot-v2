@@ -6,16 +6,16 @@ class PermissionService:
         self.config = config
 
     def is_admin(self, user: discord.Member | discord.User) -> bool:
-        if not isinstance(user, discord.Member):
-            return False
-        
-        if user.guild_permissions.administrator:
+        guild_perms = getattr(user, "guild_permissions", None)
+        if guild_perms and getattr(guild_perms, "administrator", False):
             return True
 
-        if user.id == user.guild.owner_id:
+        guild = getattr(user, "guild", None)
+        if guild and getattr(user, "id", None) == getattr(guild, "owner_id", None):
             return True
 
-        user_role_ids = [role.id for role in user.roles]
+        user_roles = getattr(user, "roles", [])
+        user_role_ids = [getattr(r, "id", r) for r in user_roles]
         if self.config.admin_role_id > 0 and self.config.admin_role_id in user_role_ids:
             return True
         if self.config.sysadmin_role_id > 0 and self.config.sysadmin_role_id in user_role_ids:
@@ -44,11 +44,12 @@ class PermissionService:
             # If not in voice despite status, allow interaction
             return True
 
-        if not isinstance(user, discord.Member):
+        user_voice = getattr(user, "voice", None)
+        if not user_voice or not getattr(user_voice, "channel", None):
             return False
 
         # Must be in the same voice channel if the bot is active
-        if not user.voice or user.voice.channel.id != radio.voice.channel.id:
+        if user_voice.channel.id != radio.voice.channel.id:
             return False
 
         return True

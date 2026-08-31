@@ -1,4 +1,5 @@
 import logging
+from logging.handlers import RotatingFileHandler
 import sys
 import os
 from colorama import init, Fore, Style
@@ -22,7 +23,12 @@ class ColoredFormatter(logging.Formatter):
 log = logging.getLogger("RadioBot")
 _console_handler_added = False
 
-def setup_logging(level_name: str = "INFO", instance_name: str = ""):
+def setup_logging(
+    level_name: str = "INFO", 
+    instance_name: str = "", 
+    max_bytes: int = 10 * 1024 * 1024, 
+    backup_count: int = 5
+):
     global _console_handler_added
     level = getattr(logging, level_name.upper(), logging.INFO)
     log.setLevel(level)
@@ -33,13 +39,18 @@ def setup_logging(level_name: str = "INFO", instance_name: str = ""):
 
     # Remove existing FileHandlers
     for h in list(log.handlers):
-        if isinstance(h, logging.FileHandler):
+        if isinstance(h, (logging.FileHandler, RotatingFileHandler)):
             log.removeHandler(h)
             h.close()
 
-    # Add specific FileHandler
+    # Add specific RotatingFileHandler
     if not os.getenv("MANAGED_LOGGING"):
-        file_handler = logging.FileHandler(target_log_file, encoding="utf-8")
+        file_handler = RotatingFileHandler(
+            target_log_file, 
+            maxBytes=max_bytes, 
+            backupCount=backup_count, 
+            encoding="utf-8"
+        )
         file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
         log.addHandler(file_handler)
 

@@ -106,3 +106,57 @@ class PaginatedView(BaseView):
     @property
     def pagination_info(self):
         return f"{t('page')} {self.current_page + 1} / {self.total_pages} ({len(self.data_list)} {t('total')})"
+
+    async def refresh_view(self, interaction: discord.Interaction):
+        """Should be overridden by subclasses to update the message with a new view instance."""
+        raise NotImplementedError
+
+    def build_navigation_row(self, extra_buttons: list | None = None, show_close: bool = True) -> discord.ui.ActionRow:
+        """Constructs a standard pagination ActionRow with Prev, Next, optional custom buttons, and Close."""
+        nav = discord.ui.ActionRow()
+        
+        prev_btn = discord.ui.Button(
+            emoji=Icons.PREV, 
+            style=discord.ButtonStyle.secondary, 
+            disabled=(self.current_page == 0)
+        )
+        next_btn = discord.ui.Button(
+            emoji=Icons.NEXT, 
+            style=discord.ButtonStyle.secondary, 
+            disabled=(self.current_page >= self.total_pages - 1)
+        )
+
+        @handle_ui_error
+        async def prev_cb(interaction: discord.Interaction):
+            await interaction.response.defer()
+            self.current_page -= 1
+            await self.refresh_view(interaction)
+
+        @handle_ui_error
+        async def next_cb(interaction: discord.Interaction):
+            await interaction.response.defer()
+            self.current_page += 1
+            await self.refresh_view(interaction)
+
+        prev_btn.callback = prev_cb
+        next_btn.callback = next_cb
+
+        nav.add_item(prev_btn)
+        nav.add_item(next_btn)
+
+        if extra_buttons:
+            for btn in extra_buttons:
+                nav.add_item(btn)
+
+        if show_close:
+            close_btn = discord.ui.Button(emoji=Icons.CLOSE, style=discord.ButtonStyle.danger)
+
+            @handle_ui_error
+            async def close_cb(interaction: discord.Interaction):
+                await interaction.response.defer()
+                await interaction.delete_original_response()
+
+            close_btn.callback = close_cb
+            nav.add_item(close_btn)
+
+        return nav

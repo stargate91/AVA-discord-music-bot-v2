@@ -4,8 +4,8 @@ from .player import (
     FrequencyStationView,
     NowPlayingView,
     HelpView,
-    init_player_ui,
 )
+from ui.context import UIContext
 from .queue import FullQueueView
 from .favorites import FavoritesView
 from .history import HistoryView
@@ -19,7 +19,7 @@ __all__ = [
     "FrequencyStationView",
     "NowPlayingView",
     "HelpView",
-    "init_player_ui",
+    "UIContext",
     "FullQueueView",
     "FavoritesView",
     "HistoryView",

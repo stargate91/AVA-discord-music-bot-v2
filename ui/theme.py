@@ -1,4 +1,3 @@
-import discord
 
 class Theme:
     PRIMARY = 0x2b2d31

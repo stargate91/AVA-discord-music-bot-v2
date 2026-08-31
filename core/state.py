@@ -1,8 +1,8 @@
 import asyncio
-import os
+import random
 import discord
-from typing import List, Optional, Any, Callable
-from core.actions import RadioState, RadioAction
+from typing import List, Optional, Callable
+from core.actions import RadioState, RadioAction, RadioActionData
 from core.models import Song
 from core.embed_state import EmbedStateManager
 from core.database import Database
@@ -10,7 +10,9 @@ from services.favorites import FavoriteManager
 from services.history import HistoryManager
 from services.cache_service import CacheService
 from services.permissions import PermissionService
-from providers import get_providers, resolve_any, resolve_playlist_any
+from services.command_service import CommandService
+from services.track_resolver import TrackResolverService
+from providers import get_providers
 from utils.logger import log
 
 class RadioManager:
@@ -30,6 +32,8 @@ class RadioManager:
         self.history_manager = HistoryManager(self.db, max_size=config.history_limit)
         self.cache_service = CacheService(config, self.db)
         self.permission_service = PermissionService(config)
+        self.command_service = CommandService(self)
+        self.resolver = TrackResolverService(self.db, self.providers)
         
         # Connection State
         self.voice: Optional[discord.VoiceClient] = None
@@ -56,6 +60,7 @@ class RadioManager:
         # Modes
         self.loop_mode: bool = False
         self.loop_queue_mode: bool = False
+        self.volume_muted: bool = False
         
         # Progress Tracking
         self.track_start_time: Optional[float] = None
@@ -63,13 +68,47 @@ class RadioManager:
         self.seek_position: Optional[float] = None
         self.is_seeking: bool = False
         
-        # Internal control
+        # Internal Queues & Locks
         self.action_queue = asyncio.Queue()
+        self._background_tasks: set[asyncio.Task] = set()
         self.last_user: Optional[discord.Member | discord.User] = None
         self.task: Optional[asyncio.Task] = None
 
         # Callbacks (set by UIManager / Player)
         self.on_state_change: Optional[Callable] = None
+
+    def create_task(self, coro, name: Optional[str] = None) -> asyncio.Task:
+        """Creates, retains strong reference, and tracks a background task with unhandled exception logging."""
+        task = asyncio.create_task(coro, name=name)
+        self._background_tasks.add(task)
+
+        def _on_done(t: asyncio.Task):
+            self._background_tasks.discard(t)
+            if not t.cancelled():
+                exc = t.exception()
+                if exc:
+                    log.error(f"[TASK] Unhandled exception in background task '{t.get_name()}': {exc}", exc_info=exc)
+
+        task.add_done_callback(_on_done)
+        return task
+
+    async def close(self):
+        """Cancels and awaits all active background tasks and closes the database connection pool."""
+        if self._background_tasks:
+            log.info(f"[RADIO] Draining {len(self._background_tasks)} background tasks...")
+            for task in list(self._background_tasks):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            self._background_tasks.clear()
+        
+        # Close database connection pool
+        self.db.close()
+
+    @property
+    def has_history(self) -> bool:
+        """Fast O(1) probe for history presence."""
+        return self.history_manager.has_items()
 
     @property
     def history(self) -> List[Song]:
@@ -104,12 +143,12 @@ class RadioManager:
     def _notify_state_change(self):
         if self.on_state_change:
             if asyncio.iscoroutinefunction(self.on_state_change):
-                asyncio.create_task(self.on_state_change(self.current_song))
+                self.create_task(self.on_state_change(self.current_song), name="notify_state_change")
             else:
                 self.on_state_change(self.current_song)
 
     # --- Action Dispatcher ---
-    def dispatch(self, action: RadioAction, data: Any = None, user: Optional[discord.Member | discord.User] = None):
+    def dispatch(self, action: RadioAction, data: RadioActionData = None, user: Optional[discord.Member | discord.User] = None):
         user_str = f" by {user.name}" if user else " (System/Auto)"
         data_str = f" with [{data}]" if data is not None else ""
         log.info(f"[ACTION] {action.name}{data_str}{user_str}")
@@ -123,13 +162,13 @@ class RadioManager:
         # 2. Forward audio/voice actions to AudioPlayer
         self.action_queue.put_nowait((action, data))
 
-    def _handle_state_action(self, action: RadioAction, data: Any, user: Optional[discord.Member | discord.User] = None) -> bool:
+    def _handle_state_action(self, action: RadioAction, data: RadioActionData, user: Optional[discord.Member | discord.User] = None) -> bool:
         """Handles non-audio state, queue, and database actions directly in RadioManager."""
         if action == RadioAction.ADD_EXT_LINK:
-            asyncio.create_task(self.add_external_link(data, user=user or self.last_user))
+            self.create_task(self._add_external_link(data, user=user or self.last_user), name="add_ext_link")
             return True
         elif action == RadioAction.ADD_SONGS:
-            asyncio.create_task(self.add_songs(data, user=user or self.last_user))
+            self.create_task(self._add_songs(data, user=user or self.last_user), name="add_songs")
             return True
         elif action == RadioAction.REMOVE_FROM_QUEUE:
             if data in self.queue:
@@ -183,79 +222,42 @@ class RadioManager:
             self._notify_state_change()
             return True
         elif action == RadioAction.SHUFFLE:
-            import random
             random.shuffle(self.queue)
             self._notify_state_change()
             return True
             
         return False
 
-    async def add_external_link(self, query: str, user: Optional[discord.Member | discord.User] = None):
-        query = query.strip()
-        provider = next((p for p in self.providers if p.matches(query)), None)
-        
-        if provider:
-            if provider.is_playlist(query):
-                log.info(f"[QUEUE] Playlist detected: {query}")
-                asyncio.create_task(self._resolve_playlist_task(query, user))
-                return None
-            
-            cached = self.db.get_cache(query)
-            if cached:
-                song = Song.from_dict(cached)
-                song.path = query
-                log.info(f"[CACHE] Hit for: {query}")
-                if cached.get("local_path") and os.path.exists(cached["local_path"]):
-                    song.is_resolving = False
-                else:
-                    song.is_resolving = True
-            else:
-                from ui.i18n import t
-                song = Song(
-                    title=t("resolving_link"),
-                    path=query,
-                    uploader="...",
-                    duration=0,
-                    is_external=True,
-                    is_resolving=True
-                )
-        else:
-            log.info(f"[SEARCH] Searching for: {query}")
-            search_results = []
-            for p in self.providers:
-                if hasattr(p, 'search'):
-                    res = await p.search(query, limit=1)
-                    if res:
-                        search_results.extend(res)
-            
-            if not search_results:
-                log.warning(f"[SEARCH] No results found for: {query}")
-                return None
-            
-            data = search_results[0]
-            song = Song.from_dict(data)
-            song.is_resolving = False
-        
-        if user:
-            song.user_id = str(user.id)
-            song.requested_by = user.display_name
-            
+    async def _add_external_link(self, query: str, user: Optional[discord.Member | discord.User] = None):
+        """Adds an external link or search query to queue via TrackResolverService."""
+        sanitized = self.resolver.sanitize_query(query)
+        if not sanitized:
+            log.warning(f"[SECURITY] Discarding invalid query: {query}")
+            return
+
+        provider = self.resolver.is_matching_provider(sanitized)
+
+        if provider and provider.is_playlist(sanitized):
+            log.info(f"[QUEUE] Playlist detected: {sanitized}")
+            self.create_task(self._resolve_playlist_task(sanitized, user), name="resolve_playlist")
+            return
+
+        song = await self.resolver.prepare_external_song(sanitized, user=user)
+        if not song:
+            return
+
         self.queue.append(song)
-        if not provider:
-            log.info(f"[SEARCH] Added first result: {song.title}")
-        else:
-            log.info(f"[QUEUE] Added link: {query}")
-        
-        if provider or song.is_resolving:
-            asyncio.create_task(self._resolve_link_task(song))
-            
+        log.info(f"[QUEUE] Added: {song.title or song.path}")
+
+        if song.is_resolving:
+            self.create_task(self._resolve_link_task(song), name=f"resolve_song_{song.title or song.path}")
+
         if self.status == RadioState.IDLE and self.voice_channel_id:
             self.status = RadioState.PLAYING
-            
-        self._notify_state_change()
-        return song
 
-    async def add_songs(self, songs: List[Song], user: Optional[discord.Member | discord.User] = None):
+        self._notify_state_change()
+
+    async def _add_songs(self, songs: List[Song], user: Optional[discord.Member | discord.User] = None):
         for song in songs:
             if user:
                 song.requested_by = user.display_name
@@ -269,48 +271,14 @@ class RadioManager:
         self._notify_state_change()
 
     async def _resolve_playlist_task(self, url: str, user: Optional[discord.Member | discord.User] = None):
-        tracks_data = await resolve_playlist_any(url, self.providers)
-        if tracks_data:
-            log.info(f"[RESOLVER] Playlist resolved: {len(tracks_data)} tracks found.")
-            for data in tracks_data:
-                song = Song.from_dict(data)
-                song.is_resolving = False
-                if user:
-                    song.user_id = str(user.id)
-                    song.requested_by = user.display_name
+        songs = await self.resolver.resolve_playlist(url, user=user)
+        if songs:
+            for song in songs:
                 self.queue.append(song)
-
-            # Atomic bulk cache insertion
-            self.db.set_cache_batch(tracks_data)
-            
             if self.status == RadioState.IDLE and self.voice_channel_id:
                 self.status = RadioState.PLAYING
             self._notify_state_change()
-        else:
-            log.warning(f"[RESOLVER] Failed to resolve playlist: {url}")
 
     async def _resolve_link_task(self, song: Song):
-        try:
-            resolved = await resolve_any(song.path, self.providers)
-            if resolved:
-                song.update(resolved)
-                cached = self.db.get_cache(song.path)
-                self.db.set_cache(
-                    url=song.path,
-                    title=song.title or "",
-                    uploader=song.uploader or "Unknown",
-                    duration=song.duration,
-                    thumbnail_url=song.thumbnail_url or "",
-                    local_path=cached.get("local_path") if cached else None
-                )
-                log.info(f"[RESOLVER] Successfully resolved: {song.uploader} - {song.title}")
-            else:
-                from ui.i18n import t
-                song.title = f"⚠️ {t('error_resolve')} {song.path}"
-                log.warning(f"[RESOLVER] Failed to resolve link: {song.path}")
-        except Exception as e:
-            log.error(f"[RADIO] Resolution task exception: {e}")
-        finally:
-            song.is_resolving = False
-            song.resolve_event.set()
-            self._notify_state_change()
+        await self.resolver.resolve_song(song)
+        self._notify_state_change()

@@ -2,7 +2,10 @@ from providers.ytdlp_provider import YTDLPProvider
 
 def get_providers(config):
     return [
-        YTDLPProvider(ytdlp_path=config.ytdlp_path or "yt-dlp")
+        YTDLPProvider(
+            ytdlp_path=config.ytdlp_path or "yt-dlp",
+            user_agent=config.user_agent
+        )
     ]
 
 async def resolve_any(url, providers):

@@ -2,10 +2,11 @@
 Thumbs.db
 __pycache__/
 data/
+*.env
+configs/*.env
 configs/.env
-configs/1.env
-configs/2.env
-configs/3.env
+!configs/.env.example
+!.env.example
 configs/config1.json
 configs/config2.json
 configs/config3.json

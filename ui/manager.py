@@ -1,10 +1,11 @@
 import asyncio
+import random
 import discord
 from ui.i18n import t, init_translate
 from core.actions import RadioState
 from core.models import Song
-from ui.views.player import WelcomeLayout, FrequencyStationView, NowPlayingView, init_player_ui
-from ui.views.queue import FullQueueView
+from ui.views.player import WelcomeLayout, FrequencyStationView, NowPlayingView
+from ui.context import UIContext
 from ui.utils import safe_delete_message, safe_fetch_message
 from utils.logger import log
 
@@ -17,9 +18,15 @@ class UIManager:
         self._last_cleanup = 0.0
         self._last_presence_sig = None
         
+        # Initialize UI context object for dependency injection
+        self.context = UIContext(
+            bot=self.bot,
+            config=self.config,
+            update_callback=self.update_now_playing
+        )
+        
         # Initialize sub-systems
         init_translate(radio)
-        init_player_ui(bot, config, self.update_now_playing)
 
     async def update_now_playing(self, song: Song | None, force_channel_id: int | None = None, force_cleanup: bool = False):
         """Public entry point for UI updates with locking."""
@@ -75,7 +82,6 @@ class UIManager:
                     await self.bot.change_presence(activity=activity)
                     self._last_presence_sig = current_sig
             else:
-                import random
                 if self.radio.status == RadioState.PAUSED:
                     msg_src = t('holding_rhythm')
                 elif self.radio.status == RadioState.IDLE:
@@ -155,9 +161,9 @@ class UIManager:
 
     async def _render_station_message(self, channel):
         if not self.radio.voice_channel_id:
-            view = WelcomeLayout(self.radio)
+            view = WelcomeLayout(self.radio, context=self.context)
         else:
-            view = FrequencyStationView(self.radio)
+            view = FrequencyStationView(self.radio, context=self.context)
             
         if not self.radio.station_message:
             msg_id = self.radio.embed_manager.load_message_id("station")
@@ -196,7 +202,7 @@ class UIManager:
             self.radio.embed_manager.save_message_id("player", None)
             return
 
-        player_view = NowPlayingView(self.radio, song=song)
+        player_view = NowPlayingView(self.radio, song=song, context=self.context)
         
         if not self.radio.now_playing_message:
             msg_id = self.radio.embed_manager.load_message_id("player")

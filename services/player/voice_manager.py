@@ -115,8 +115,8 @@ class VoiceManager:
         if voice:
             try:
                 await voice.disconnect()
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning(f"[VOICE] Error during voice client disconnect: {e}")
         self.radio.voice = None
         
         if self.cleanup_ui:

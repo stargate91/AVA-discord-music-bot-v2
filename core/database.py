@@ -1,23 +1,79 @@
 import sqlite3
 import os
+import queue
+from contextlib import contextmanager
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Generator
 from core.models import Song
 from utils.logger import log
 
-class Database:
-    def __init__(self, db_path: str = "data/radio.db"):
+class SQLiteConnectionPool:
+    """
+    Thread-safe connection pool for SQLite to eliminate per-query connect/disconnect overhead.
+    Preconfigures WAL mode, synchronous=NORMAL, and in-memory temp stores.
+    """
+    def __init__(self, db_path: str, max_connections: int = 5, timeout: float = 10.0):
         self.db_path = db_path
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        self._init_db()
+        self.max_connections = max_connections
+        self.timeout = timeout
+        self._pool: queue.Queue[sqlite3.Connection] = queue.Queue(maxsize=max_connections)
+        self._all_connections: List[sqlite3.Connection] = []
+        self._is_closed = False
 
-    def _get_connection(self) -> sqlite3.Connection:
-        """Returns a configured SQLite connection with WAL mode and memory temp store."""
-        conn = sqlite3.connect(self.db_path)
+        for _ in range(max_connections):
+            conn = self._create_connection()
+            self._all_connections.append(conn)
+            self._pool.put(conn)
+
+    def _create_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(
+            self.db_path, 
+            timeout=self.timeout, 
+            check_same_thread=False
+        )
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA temp_store=MEMORY")
         return conn
+
+    @contextmanager
+    def get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        if self._is_closed:
+            raise RuntimeError("Cannot acquire connection from a closed SQLiteConnectionPool.")
+        conn = self._pool.get(block=True, timeout=self.timeout)
+        try:
+            yield conn
+        finally:
+            if not self._is_closed:
+                self._pool.put(conn)
+
+    def close(self):
+        self._is_closed = True
+        while not self._pool.empty():
+            self._pool.get_nowait()
+        for conn in self._all_connections:
+            conn.close()
+        self._all_connections.clear()
+
+class Database:
+    MAX_HISTORY_ENTRIES = 1000
+
+    def __init__(self, db_path: str = "data/radio.db", timeout: float = 10.0, pool_size: int = 5):
+        self.db_path = db_path
+        self.timeout = timeout
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self._pool = SQLiteConnectionPool(self.db_path, max_connections=pool_size, timeout=self.timeout)
+        self._init_db()
+
+    @contextmanager
+    def _get_connection(self) -> Generator[sqlite3.Connection, None, None]:
+        """Context manager borrowing a preconfigured SQLite connection from the pool."""
+        with self._pool.get_connection() as conn:
+            yield conn
+
+    def close(self):
+        """Closes all connections in the pool."""
+        self._pool.close()
 
     def _init_db(self):
         """Initializes the database, creates tables and performance indices."""
@@ -40,7 +96,7 @@ class Database:
             # Migration for local_path if it doesn't exist
             try:
                 cursor.execute("ALTER TABLE song_cache ADD COLUMN local_path TEXT")
-            except Exception:
+            except sqlite3.OperationalError:
                 pass
             
             # 2. Playback History (with user stats)
@@ -103,11 +159,11 @@ class Database:
             # Migrations for existing history schemas
             try:
                 cursor.execute("ALTER TABLE history ADD COLUMN requested_by TEXT")
-            except Exception:
+            except sqlite3.OperationalError:
                 pass
             try:
                 cursor.execute("ALTER TABLE history ADD COLUMN user_id TEXT")
-            except Exception:
+            except sqlite3.OperationalError:
                 pass
             conn.commit()
 
@@ -128,6 +184,7 @@ class Database:
         return None
 
     def set_cache(self, url: str, title: str, uploader: str, duration: int, thumbnail_url: str, local_path: Optional[str] = None):
+        """Caches song metadata."""
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
@@ -135,17 +192,58 @@ class Database:
                     INSERT OR REPLACE INTO song_cache 
                     (url, title, uploader, duration, thumbnail_url, local_path, last_updated)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (url, title, uploader, duration, thumbnail_url, local_path, datetime.now()))
+                """, (url, title, uploader, duration, thumbnail_url, local_path, datetime.now().isoformat()))
                 conn.commit()
         except Exception as e:
-            log.error(f"Cache set error: {e}")
+            log.error(f"Error setting cache for {url}: {e}")
+
+    def update_cache_path(self, url: str, local_path: str):
+        """Updates just the local path of a cached song."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute("UPDATE song_cache SET local_path = ?, last_updated = ? WHERE url = ?", (local_path, datetime.now().isoformat(), url))
+                conn.commit()
+        except Exception as e:
+            log.error(f"Error updating cache path for {url}: {e}")
+
+    def clear_cache_metadata(self):
+        """Purges old song metadata from cache."""
+        try:
+            with self._get_connection() as conn:
+                conn.execute("DELETE FROM song_cache")
+                conn.commit()
+        except Exception as e:
+            log.error(f"Error clearing cache DB: {e}")
+
+    def get_all_cached_urls(self) -> List[str]:
+        """Returns all URLs that have cached files."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT url FROM song_cache WHERE local_path IS NOT NULL")
+                return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            log.error(f"Error fetching cached URLs: {e}")
+            return []
+
+    def cache_song(self, song: Song, local_path: Optional[str] = None):
+        """Convenience wrapper to cache a Song object."""
+        if song and song.path:
+            self.set_cache(
+                url=song.path,
+                title=song.title or "",
+                uploader=song.uploader or "Unknown",
+                duration=song.duration,
+                thumbnail_url=song.thumbnail_url or "",
+                local_path=local_path
+            )
 
     def set_cache_batch(self, songs_data: List[Dict[str, Any]]):
         """Atomically inserts or replaces a batch of song metadata in a single transaction."""
         if not songs_data:
             return
         try:
-            now = datetime.now()
+            now_iso = datetime.now().isoformat()
             rows = [
                 (
                     d.get("url") or d.get("path"),
@@ -154,7 +252,7 @@ class Database:
                     int(d.get("duration", 0)),
                     d.get("thumbnail_url", ""),
                     d.get("local_path"),
-                    now
+                    now_iso
                 )
                 for d in songs_data
                 if (d.get("url") or d.get("path"))
@@ -181,7 +279,7 @@ class Database:
 
     # --- History Methods ---
     def add_history(self, song: Song):
-        """Saves a song to the history table."""
+        """Saves a song to the history table and prunes old entries beyond MAX_HISTORY_ENTRIES."""
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
@@ -193,9 +291,38 @@ class Database:
                     song.title, song.path, song.uploader, song.duration, 
                     song.thumbnail_url, song.is_external, song.requested_by, str(song.user_id) if song.user_id else None
                 ))
+                # Prune old history entries if over limit
+                cursor.execute("""
+                    DELETE FROM history WHERE id NOT IN (
+                        SELECT id FROM history ORDER BY id DESC LIMIT ?
+                    )
+                """, (self.MAX_HISTORY_ENTRIES,))
                 conn.commit()
         except Exception as e:
             log.error(f"Error adding to history DB: {e}")
+
+    def has_history(self) -> bool:
+        """Fast O(1) check whether any history records exist."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1 FROM history LIMIT 1")
+                return cursor.fetchone() is not None
+        except Exception as e:
+            log.error(f"Error checking has_history in DB: {e}")
+            return False
+
+    def get_history_count(self) -> int:
+        """Returns total count of history records."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM history")
+                row = cursor.fetchone()
+                return row[0] if row else 0
+        except Exception as e:
+            log.error(f"Error checking get_history_count in DB: {e}")
+            return 0
 
     def increment_stat(self, key: str):
         """Increments a global counter for analytics."""
@@ -206,8 +333,8 @@ class Database:
                     ON CONFLICT(key) DO UPDATE SET value = value + 1
                 """, (key,))
                 conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"Failed to increment system stat '{key}': {e}")
 
     def get_history_latest(self, offset: int = 0) -> Optional[Song]:
         """Returns the history entry at the given offset (0 = latest) without deleting."""
@@ -314,6 +441,18 @@ class Database:
         except Exception as e:
             log.error(f"Error getting favorites from DB: {e}")
             return []
+
+    def get_favorite_count(self, user_id: str) -> int:
+        """Returns the number of favorites saved by a user."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM favorites WHERE user_id = ?", (str(user_id),))
+                row = cursor.fetchone()
+                return row[0] if row else 0
+        except Exception as e:
+            log.error(f"Error getting favorite count from DB: {e}")
+            return 0
 
     def clear_favorites(self, user_id: str):
         try:

@@ -58,13 +58,7 @@ class SearchModal(Modal):
         log.info(f"[SEARCH] Found {len(results)} results for: {query}")
         
         for song in results:
-            self.radio.db.set_cache(
-                url=song.path,
-                title=song.title or "",
-                uploader=song.uploader or "Unknown",
-                duration=song.duration,
-                thumbnail_url=song.thumbnail_url or ""
-            )
+            song.cache_to_db(self.radio.db)
             
         view = SearchResultsView(self.radio, results, query=query, user=interaction.user)
         await interaction.followup.send(view=view, ephemeral=True)

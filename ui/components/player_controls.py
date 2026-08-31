@@ -1,7 +1,10 @@
+"""
+Interactive Discord UI controls for playback orchestration (buttons, selects, station tuning).
+"""
+
 import discord
 from ui.icons import Icons
 from ui.i18n import t
-from ui.theme import Theme
 from ui.utils import respond, get_feedback
 from ui.views.base import handle_ui_error
 from core.actions import RadioAction, RadioState
@@ -9,6 +12,7 @@ from core.models import Song
 from utils.logger import log
 
 class StationSelect(discord.ui.Select):
+    """Dropdown menu for selecting and switching voice channels (stations)."""
     def __init__(self, radio, channels, custom_id="station_select"):
         self.radio = radio
         options = [
@@ -30,6 +34,7 @@ class StationSelect(discord.ui.Select):
             await interaction.response.defer()
 
 class LanguageSelect(discord.ui.Select):
+    """Dropdown menu for switching bot localization / language."""
     def __init__(self, radio, custom_id="language_select", update_callback=None):
         self.radio = radio
         self.update_callback = update_callback
@@ -58,6 +63,7 @@ class LanguageSelect(discord.ui.Select):
             await self.update_callback(self.radio.current_song)
 
 class UIStyleSelect(discord.ui.Select):
+    """Dropdown menu for toggling UI compactness (Full vs Compact mode)."""
     def __init__(self, radio, custom_id="uistyle_select", update_callback=None):
         self.radio = radio
         self.update_callback = update_callback
@@ -83,6 +89,7 @@ class UIStyleSelect(discord.ui.Select):
             await self.update_callback(self.radio.current_song)
 
 class DisconnectButton(discord.ui.Button):
+    """Button to disconnect the bot from the current voice channel."""
     def __init__(self, radio):
         super().__init__(
             label=t('sever_uplink'),
@@ -98,6 +105,7 @@ class DisconnectButton(discord.ui.Button):
         await respond(interaction, get_feedback("severing"), delete_after=self.radio.config.notification_timeout)
 
 class PlayPauseButton(discord.ui.Button):
+    """Button to toggle between play/resume and pause states."""
     def __init__(self, radio):
         is_paused = radio.status in [RadioState.PAUSED, RadioState.STOPPED, RadioState.IDLE]
         label = None if radio.is_compact else (t('play_label') if is_paused else t('pause_label'))
@@ -123,6 +131,7 @@ class PlayPauseButton(discord.ui.Button):
             await respond(interaction, get_feedback("pausing"), delete_after=self.radio.config.notification_timeout)
 
 class StopButton(discord.ui.Button):
+    """Button to stop audio playback and clear active stream."""
     def __init__(self, radio):
         is_disabled = radio.status in [RadioState.IDLE, RadioState.STOPPED]
         super().__init__(
@@ -140,6 +149,7 @@ class StopButton(discord.ui.Button):
         await respond(interaction, get_feedback("stopping"), delete_after=self.radio.config.notification_timeout)
 
 class ForwardButton(discord.ui.Button):
+    """Button to skip forward to the next song in queue or navigation stack."""
     def __init__(self, radio):
         super().__init__(
             label=None if radio.is_compact else t('forward_label'),
@@ -156,13 +166,14 @@ class ForwardButton(discord.ui.Button):
         await respond(interaction, get_feedback("forwarding"), delete_after=self.radio.config.notification_timeout)
 
 class BackButton(discord.ui.Button):
+    """Button to step backward into playback history."""
     def __init__(self, radio):
         super().__init__(
             label=None if radio.is_compact else t('back_label'),
             emoji=Icons.BACK,
             style=discord.ButtonStyle.secondary,
             custom_id="back_button",
-            disabled=(not radio.history)
+            disabled=(not radio.has_history)
         )
         self.radio = radio
 
@@ -172,6 +183,7 @@ class BackButton(discord.ui.Button):
         await respond(interaction, get_feedback("backing"), delete_after=self.radio.config.notification_timeout)
 
 class FavoriteToggleButton(discord.ui.Button):
+    """Button to toggle the current song in user favorites."""
     def __init__(self, radio, song: Song | None):
         is_fav = False
         target_user_id = (str(radio.last_user.id) if radio.last_user else None) or (song.user_id if song else None)
@@ -212,6 +224,7 @@ class FavoriteToggleButton(discord.ui.Button):
             log.debug(f"[UI] Could not refresh player view: {e}")
 
 class HelpButton(discord.ui.Button):
+    """Button to display the radio help and commands embed."""
     def __init__(self, radio):
         super().__init__(
             label=t("help_label"),

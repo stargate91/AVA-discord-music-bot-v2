@@ -57,14 +57,7 @@ class CacheService:
         # Fallback: Check deterministic path with any extension
         lp = self.get_cache_path(song)
         if lp and os.path.exists(lp):
-            self.db.set_cache(
-                url=song.path,
-                title=song.title or "",
-                uploader=song.uploader or "Unknown",
-                duration=song.duration,
-                thumbnail_url=song.thumbnail_url or "",
-                local_path=lp
-            )
+            song.cache_to_db(self.db, local_path=lp)
             return True
             
         return False
@@ -108,14 +101,7 @@ class CacheService:
                     actual_path = self.get_cache_path(song)
                     if actual_path:
                         log.info(f"[CACHE] Download complete: {song.title} -> {actual_path}")
-                        self.db.set_cache(
-                            url=song.path,
-                            title=song.title or "",
-                            uploader=song.uploader or "Unknown",
-                            duration=song.duration,
-                            thumbnail_url=song.thumbnail_url or "",
-                            local_path=actual_path
-                        )
+                        song.cache_to_db(self.db, local_path=actual_path)
                 else:
                     err = stderr.decode().strip()
                     log.error(f"[CACHE] Download failed for {song.title}: {err}")
@@ -204,13 +190,6 @@ class CacheService:
             try:
                 os.remove(path)
                 log.info(f"[CACHE] Ephemeral deletion: {song.title}")
-                self.db.set_cache(
-                    url=song.path,
-                    title=song.title or "",
-                    uploader=song.uploader or "Unknown",
-                    duration=song.duration,
-                    thumbnail_url=song.thumbnail_url or "",
-                    local_path=None
-                )
+                song.cache_to_db(self.db, local_path=None)
             except Exception as e:
                 log.warning(f"[CACHE] Could not delete ephemeral file {path}: {e}")

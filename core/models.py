@@ -83,3 +83,16 @@ class Song:
 
         if not self.is_resolving and self._resolve_event is not None:
             self._resolve_event.set()
+
+    def cache_to_db(self, db, local_path: Optional[str] = None):
+        """Persists the song metadata to SQLite cache using the provided Database instance."""
+        if not self.path or not db:
+            return
+        db.set_cache(
+            url=self.path,
+            title=self.title or "",
+            uploader=self.uploader or "Unknown",
+            duration=self.duration,
+            thumbnail_url=self.thumbnail_url or "",
+            local_path=local_path
+        )

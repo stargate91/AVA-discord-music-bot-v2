@@ -24,6 +24,49 @@ class Config:
     emojis: dict = field(default_factory=dict)
     update_voice_status: bool = False
 
+    def __post_init__(self):
+        """Validates configuration parameters and types immediately upon initialization."""
+        # 1. Token validation
+        if not self.token or not isinstance(self.token, str) or self.token.strip() == "":
+            raise ValueError("Configuration error: 'token' must be a non-empty string.")
+        if "your_bot_token_here" in self.token.lower():
+            raise ValueError("Configuration error: 'token' is set to placeholder text. Please provide a valid Discord bot token.")
+
+        # 2. Integer ID validation
+        id_fields = [
+            ("guild_id", self.guild_id),
+            ("radio_text_channel_id", self.radio_text_channel_id),
+            ("auto_join_channel_id", self.auto_join_channel_id),
+            ("afk_channel_id", self.afk_channel_id),
+            ("admin_role_id", self.admin_role_id),
+            ("sysadmin_role_id", self.sysadmin_role_id),
+        ]
+        for name, val in id_fields:
+            if not isinstance(val, int) or val < 0:
+                raise ValueError(f"Configuration error: '{name}' must be a non-negative integer, got {val!r}.")
+
+        # 3. Language code validation
+        valid_lang_codes = {lang.get("code") for lang in self.languages if isinstance(lang, dict)}
+        if valid_lang_codes and self.default_language not in valid_lang_codes:
+            raise ValueError(
+                f"Configuration error: 'default_language' ({self.default_language!r}) is not registered in languages list: {valid_lang_codes}."
+            )
+
+        # 4. UI mode validation
+        if self.default_ui_mode not in {"full", "compact"}:
+            raise ValueError(f"Configuration error: 'default_ui_mode' must be 'full' or 'compact', got {self.default_ui_mode!r}.")
+
+        # 5. Volume validation
+        vol = self.default_volume
+        if not (0.0 <= vol <= 1.0):
+            raise ValueError(f"Configuration error: default volume must be between 0.0 and 1.0, got {vol}.")
+
+        # 6. Timing and cache bounds
+        if self.progress_update_seconds < 1:
+            raise ValueError(f"Configuration error: progress_update_seconds must be >= 1, got {self.progress_update_seconds}.")
+        if self.max_cache_size_mb <= 0:
+            raise ValueError(f"Configuration error: max_cache_size_mb must be > 0, got {self.max_cache_size_mb}.")
+
     @property
     def embed_refresh_minutes(self): return self.timings.get("embed_refresh_minutes", 58)
     @property
@@ -50,6 +93,10 @@ class Config:
     def database_path(self): return self.defaults.get("database_path", "data/radio.db")
     @property
     def log_level(self): return self.defaults.get("log_level", "INFO")
+    @property
+    def log_max_bytes(self): return self.defaults.get("log_max_bytes", 10 * 1024 * 1024)
+    @property
+    def log_backup_count(self): return self.defaults.get("log_backup_count", 5)
     @property
     def ffmpeg_reconnect_options(self):
         return self.defaults.get("ffmpeg_reconnect_options", (
@@ -86,7 +133,7 @@ class Config:
     def search_limit(self): return self.defaults.get("search_limit", 20)
     @property
     def user_agent(self): 
-        return self.defaults.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        return self.defaults.get("user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36")
     @property
     def audio_bitrate(self): return self.defaults.get("audio_bitrate", "128k")
     @property
@@ -130,8 +177,20 @@ def load_config(config_file: str = "config.json", instance_name: str = "") -> Co
         
     with open(base_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    
-    token = os.getenv("DISCORD_TOKEN") or data.get("token")
+
+    if "token" in data:
+        raise ValueError(
+            "Security violation: 'token' cannot be placed inside JSON configuration files to prevent credential leakage in git. "
+            "Please remove 'token' from your JSON config and configure DISCORD_TOKEN via .env or environment variables."
+        )
+
+    token = os.getenv("DISCORD_TOKEN")
+    if not token or token.strip() == "":
+        raise ValueError(
+            f"Missing required environment variable: 'DISCORD_TOKEN' for instance '{instance_name or 'default'}'. "
+            f"Please set DISCORD_TOKEN in '{env_name}' or your environment."
+        )
+
     guild_id_raw = os.getenv("GUILD_ID") or data.get("guild_id", 0)
     guild_id = int(guild_id_raw) if guild_id_raw else 0
 

@@ -1,8 +1,8 @@
 import os
 import asyncio
 import discord
-from typing import Any, Optional, Callable, TYPE_CHECKING
-from core.actions import RadioAction, RadioState
+from typing import Optional, Callable, TYPE_CHECKING
+from core.actions import RadioAction, RadioState, RadioActionData
 from core.models import Song
 from utils.logger import log
 
@@ -26,7 +26,7 @@ class PlaybackActionHandler:
         os.environ["BOT_RESTART"] = "1"
         await self.bot.close()
 
-    async def handle_disconnected_action(self, action: RadioAction, data: Any) -> bool:
+    async def handle_disconnected_action(self, action: RadioAction, data: RadioActionData) -> bool:
         """Handles actions when voice is disconnected."""
         if action == RadioAction.JOIN:
             self.radio.voice_channel_id = data
@@ -40,7 +40,7 @@ class PlaybackActionHandler:
             return True
         return False
 
-    async def handle_idle_action(self, action: RadioAction, data: Any, voice: Optional[discord.VoiceClient]) -> bool:
+    async def handle_idle_action(self, action: RadioAction, data: RadioActionData, voice: Optional[discord.VoiceClient]) -> bool:
         """Handles actions when voice is connected but in IDLE, PAUSED, or STOPPED state."""
         if action == RadioAction.SET_VOLUME:
             self.radio.volume = data
@@ -93,7 +93,7 @@ class PlaybackActionHandler:
         self.radio.status = RadioState.PLAYING
         return False
 
-    async def handle_playback_action(self, action: RadioAction, data: Any, 
+    async def handle_playback_action(self, action: RadioAction, data: RadioActionData, 
                                      voice: discord.VoiceClient, song: Optional[Song]) -> bool:
         """Handles actions received while audio is actively streaming."""
         if action == RadioAction.SKIP:

@@ -3,6 +3,8 @@ from .cache_service import CacheService
 from .permissions import PermissionService
 from .favorites import FavoriteManager
 from .history import HistoryManager
+from .command_service import CommandService
+from .track_resolver import TrackResolverService
 
 __all__ = [
     "RadioPlayer",
@@ -10,4 +12,6 @@ __all__ = [
     "PermissionService",
     "FavoriteManager",
     "HistoryManager",
+    "CommandService",
+    "TrackResolverService",
 ]

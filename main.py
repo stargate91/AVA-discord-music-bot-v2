@@ -3,9 +3,12 @@ import os
 import sys
 import re
 import argparse
+import logging
 from utils.config import load_config
 from utils.logger import log, setup_logging
 from bot import RadioBot
+
+EXIT_CODE_RESTART = 42
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Discord Radio Bot Instance")
@@ -13,7 +16,7 @@ def parse_arguments():
     parser.add_argument("--config", help="Specific config file path")
     return parser.parse_args()
 
-async def main():
+async def main() -> int:
     args = parse_arguments()
     
     instance_name = args.instance
@@ -29,30 +32,53 @@ async def main():
     
     try:
         config = load_config(config_file, instance_name=instance_name)
-        setup_logging(config.log_level, instance_name=instance_name)
+        setup_logging(
+            config.log_level, 
+            instance_name=instance_name, 
+            max_bytes=config.log_max_bytes, 
+            backup_count=config.log_backup_count
+        )
     except FileNotFoundError:
         print(f"Error: Configuration file '{config_file}' not found.")
-        sys.exit(1)
+        return 1
 
     bot = RadioBot(config, instance_name=instance_name)
+    restart_requested = False
     
     try:
         async with bot:
             await bot.start(config.token)
     except (asyncio.CancelledError, KeyboardInterrupt):
-        log.info("Shutdown initiated...")
+        log.info("Shutdown initiated by user/signal...")
     finally:
+        restart_requested = (os.getenv("BOT_RESTART") == "1")
+        os.environ["BOT_RESTART"] = "0"
+        
         if not bot.is_closed():
             await bot.close()
         log.info("Shutdown complete.")
+        logging.shutdown()
 
-        if os.getenv("BOT_RESTART") == "1":
-            log.info("Process restart initiated via execv...")
-            os.environ["BOT_RESTART"] = "0"
+    if restart_requested:
+        # If running under a supervisor (Docker, systemd, supervisord, etc.)
+        if os.getenv("SUPERVISOR") == "1" or os.getenv("DOCKER") == "1":
+            log.info("Exiting with restart code for process manager...")
+            return EXIT_CODE_RESTART
+
+        # Standalone interactive restart
+        log.info("Process restart initiated via execv...")
+        try:
             os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception as e:
+            log.error(f"os.execv failed: {e}. Exiting with code {EXIT_CODE_RESTART}")
+            return EXIT_CODE_RESTART
+            
+    return 0
 
 if __name__ == "__main__":
+    exit_code = 0
     try:
-        asyncio.run(main())
+        exit_code = asyncio.run(main())
     except KeyboardInterrupt:
-        pass
+        exit_code = 0
+    sys.exit(exit_code)

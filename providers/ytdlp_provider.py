@@ -8,8 +8,11 @@ from .base import MusicProvider
 from utils.logger import log
 
 class YTDLPProvider(MusicProvider):
-    def __init__(self, ytdlp_path: str = "yt-dlp"):
+    DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+
+    def __init__(self, ytdlp_path: str = "yt-dlp", user_agent: Optional[str] = None):
         self.ytdlp_path = ytdlp_path
+        ua = user_agent or self.DEFAULT_USER_AGENT
         self.common_args = [
             "--socket-timeout", "10",
             "--no-warnings",
@@ -17,7 +20,7 @@ class YTDLPProvider(MusicProvider):
             "--no-check-certificates",
             "--no-update",
             "--extractor-args", "youtube:player_client=android,web",
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "--user-agent", ua
         ]
 
     def _get_exec_cmd(self) -> List[str]:

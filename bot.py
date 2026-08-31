@@ -1,5 +1,4 @@
 import asyncio
-import os
 import discord
 from discord.ext import commands
 from core.state import RadioManager
@@ -85,8 +84,8 @@ class RadioBot(commands.Bot):
             if self.radio.status == RadioState.PLAYING and self.radio.now_playing_message:
                 try:
                     await self.ui_manager.update_now_playing(self.radio.current_song)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug(f"[UI] Progress update failed: {e}")
 
     async def close(self):
         """Graceful shutdown logic."""
@@ -97,5 +96,8 @@ class RadioBot(commands.Bot):
         
         if self.bg_tasks:
             await asyncio.gather(*self.bg_tasks, return_exceptions=True)
+
+        if hasattr(self.radio, 'close'):
+            await self.radio.close()
             
         await super().close()

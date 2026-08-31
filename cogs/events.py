@@ -1,3 +1,7 @@
+"""
+Discord gateway event listener cog handling ready initialization, voice state updates, and messages.
+"""
+
 import asyncio
 import discord
 import random
@@ -8,6 +12,7 @@ from cogs.prefix_commands import handle_prefix_commands
 from utils.logger import log
 
 class EventsCog(commands.Cog):
+    """Cog listening to lifecycle and voice gateway events (on_ready, on_voice_state_update, on_message)."""
     def __init__(self, bot):
         self.bot = bot
         self.radio = bot.radio
@@ -17,15 +22,16 @@ class EventsCog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         instance_label = self.bot.instance_name if self.bot.instance_name else 'Default'
-        log.info(f"--- RADIO BOT ONLINE ---")
+        log.info("--- RADIO BOT ONLINE ---")
         log.info(f"Identity: {self.bot.user} (ID: {self.bot.user.id})")
         log.info(f"Instance: {instance_label}")
-        log.info(f"------------------------")
+        log.info("------------------------")
 
         try:
-            self.bot.add_view(WelcomeLayout(self.radio))
-            self.bot.add_view(FrequencyStationView(self.radio))
-            self.bot.add_view(NowPlayingView(self.radio))
+            ctx = self.ui_manager.context
+            self.bot.add_view(WelcomeLayout(self.radio, context=ctx))
+            self.bot.add_view(FrequencyStationView(self.radio, context=ctx))
+            self.bot.add_view(NowPlayingView(self.radio, context=ctx))
             await self.ui_manager.force_new_embed()
         except Exception as e:
             log.error(f"Error during on_ready view registration: {e}")

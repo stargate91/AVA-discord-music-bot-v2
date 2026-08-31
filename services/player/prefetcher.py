@@ -39,13 +39,7 @@ class PrefetchService:
                 resolved = await resolve_any(song.path, self.radio.providers)
                 if resolved:
                     song.update(resolved)
-                    self.radio.db.set_cache(
-                        url=song.path,
-                        title=song.title or "",
-                        uploader=song.uploader or "Unknown",
-                        duration=song.duration,
-                        thumbnail_url=song.thumbnail_url or ""
-                    )
+                    song.cache_to_db(self.radio.db)
                     log.info(f"[PREFETCH] Stream URL resolved ahead of time for: {song.title}")
             
             if song.is_external and not self.radio.is_cached(song):

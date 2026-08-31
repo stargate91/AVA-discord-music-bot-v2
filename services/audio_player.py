@@ -1,8 +1,9 @@
 import time
 import asyncio
+import traceback
 import discord
 from typing import Optional, Callable, TYPE_CHECKING
-from core.actions import RadioAction, RadioState
+from core.actions import RadioState
 from core.models import Song
 from utils.logger import log
 from services.player import (
@@ -78,7 +79,6 @@ class RadioPlayer:
                 await asyncio.sleep(self.config.player_loop_sleep)
 
             except Exception as e:
-                import traceback
                 log.error(f"Player crash: {e}")
                 log.error(traceback.format_exc())
                 await asyncio.sleep(self.config.error_retry_seconds)

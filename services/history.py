@@ -33,7 +33,11 @@ class HistoryManager:
         """Fetches and deletes the most recent history entry. (Legacy/Manual use)"""
         return self.db.pop_history_latest()
 
+    def has_items(self) -> bool:
+        """O(1) check if history contains any items."""
+        return self.db.has_history()
+
     @property
     def history(self) -> List[Song]:
-        """Legacy access for compatibility with existing UI."""
-        return self.get_all()
+        """Bounded history access for UI and commands (defaults to max_size limit)."""
+        return self.get_all(limit=self.max_size)

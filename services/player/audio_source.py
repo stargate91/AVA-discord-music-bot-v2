@@ -46,13 +46,7 @@ class AudioSourceFactory:
                 resolved = await resolve_any(source_path, self.radio.providers)
                 if resolved:
                     song.update(resolved)
-                    self.radio.db.set_cache(
-                        url=source_path,
-                        title=song.title or "",
-                        uploader=song.uploader or "Unknown",
-                        duration=song.duration,
-                        thumbnail_url=song.thumbnail_url or ""
-                    )
+                    song.cache_to_db(self.radio.db)
             
             if song.stream_url:
                 return song.stream_url

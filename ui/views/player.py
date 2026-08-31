@@ -4,10 +4,9 @@ from discord.ui import (
     ActionRow, Container, Section, 
     TextDisplay, Thumbnail, Separator
 )
-from ui.icons import Icons
 from ui.i18n import t
 from ui.theme import Theme
-from ui.utils import format_duration, get_feedback
+from ui.utils import format_duration, get_feedback, truncate
 from ui.views.base import BaseView
 from ui.components.progress_bar import create_progress_bar
 from ui.components.player_controls import (
@@ -29,16 +28,8 @@ from ui.modals.seek import SeekButton
 from ui.modals.volume import VolumeButton
 from core.actions import RadioState
 from core.models import Song
-
-_update_callback = None
-_bot_ref = None
-_config_ref = None
-
-def init_player_ui(bot, config, update_fn):
-    global _bot_ref, _config_ref, _update_callback
-    _bot_ref = bot
-    _config_ref = config
-    _update_callback = update_fn
+from ui.context import UIContext
+from typing import Optional
 
 class HelpView:
     def __init__(self, radio):
@@ -75,15 +66,16 @@ class HelpView:
         return embed
 
 class WelcomeLayout(BaseView):
-    def __init__(self, radio):
+    def __init__(self, radio, context: Optional[UIContext] = None):
         super().__init__(radio)
+        self.context = context
         embed_color = Theme.BACKGROUND
         
         header = Container(accent_color=embed_color)
         welcome_text = f"**{get_feedback('system_sync')}**\n{t('synchro_subtitle')}"
         header.add_item(TextDisplay(welcome_text))
         
-        guild = _bot_ref.get_guild(_config_ref.guild_id) if (_bot_ref and _config_ref) else None
+        guild = context.get_guild() if context else None
         if guild:
             afk_id = radio.config.afk_channel_id
             v_channels = [c for c in sorted(guild.voice_channels, key=lambda c: c.position) if c.id != afk_id][:25]
@@ -91,12 +83,13 @@ class WelcomeLayout(BaseView):
             row_station.add_item(StationSelect(radio, v_channels, custom_id="welcome:station_select"))
             header.add_item(row_station)
             
+            update_cb = context.update_callback if context else None
             row_lang = ActionRow()
-            row_lang.add_item(LanguageSelect(radio, custom_id="welcome:language_select", update_callback=_update_callback))
+            row_lang.add_item(LanguageSelect(radio, custom_id="welcome:language_select", update_callback=update_cb))
             header.add_item(row_lang)
             
             row_style = ActionRow()
-            row_style.add_item(UIStyleSelect(radio, custom_id="welcome:uistyle_select", update_callback=_update_callback))
+            row_style.add_item(UIStyleSelect(radio, custom_id="welcome:uistyle_select", update_callback=update_cb))
             header.add_item(row_style)
             
             row_lib = ActionRow()
@@ -112,12 +105,13 @@ class WelcomeLayout(BaseView):
         self.add_item(status_box)
 
 class FrequencyStationView(BaseView):
-    def __init__(self, radio):
+    def __init__(self, radio, context: Optional[UIContext] = None):
         super().__init__(radio)
+        self.context = context
         main = Container(accent_color=Theme.BACKGROUND)
         main.add_item(TextDisplay(f"**{get_feedback('system_settings')}**\n{t('synchro_settings_subtitle')}"))
         
-        guild = _bot_ref.get_guild(_config_ref.guild_id) if (_bot_ref and _config_ref) else None
+        guild = context.get_guild() if context else None
         if guild:
             afk_id = radio.config.afk_channel_id
             v_channels = [c for c in sorted(guild.voice_channels, key=lambda c: c.position) if c.id != afk_id][:25]
@@ -125,12 +119,13 @@ class FrequencyStationView(BaseView):
             row_select.add_item(StationSelect(radio, v_channels, custom_id="station:station_select"))
             main.add_item(row_select)
             
+            update_cb = context.update_callback if context else None
             row_lang = ActionRow()
-            row_lang.add_item(LanguageSelect(radio, custom_id="station:language_select", update_callback=_update_callback))
+            row_lang.add_item(LanguageSelect(radio, custom_id="station:language_select", update_callback=update_cb))
             main.add_item(row_lang)
             
             row_style = ActionRow()
-            row_style.add_item(UIStyleSelect(radio, custom_id="station:uistyle_select", update_callback=_update_callback))
+            row_style.add_item(UIStyleSelect(radio, custom_id="station:uistyle_select", update_callback=update_cb))
             main.add_item(row_style)
             
             mgmt_row = ActionRow()
@@ -142,8 +137,9 @@ class FrequencyStationView(BaseView):
         self.add_item(main)
 
 class NowPlayingView(BaseView):
-    def __init__(self, radio, song: Song | None = None):
+    def __init__(self, radio, song: Song | None = None, context: Optional[UIContext] = None):
         super().__init__(radio)
+        self.context = context
         song = song or radio.current_song
         
         if radio.status == RadioState.PLAYING:
@@ -172,10 +168,10 @@ class NowPlayingView(BaseView):
         status_display = get_feedback(status_key)
         master = Container(accent_color=accent_color)
         
-        def truncate(text, max_len):
-            return (text[:max_len-3] + '...') if len(text) > max_len else text
-
-        title = song.title if song else t("unknown")
+        if song and song.is_resolving and not song.title:
+            title = t("resolving_link")
+        else:
+            title = song.title if song else t("unknown")
         uploader = (song.uploader if song else None) or t("unknown")
         
         truncated_title = truncate(title, radio.config.max_title_len)
@@ -233,8 +229,8 @@ class NowPlayingView(BaseView):
 
         thumb = None
         thumb_url = song.thumbnail_url if song else None
-        if not thumb_url and radio.status == RadioState.IDLE and _bot_ref:
-            thumb_url = str(_bot_ref.user.display_avatar.url)
+        if not thumb_url and radio.status == RadioState.IDLE and context and context.bot_user:
+            thumb_url = str(context.bot_user.display_avatar.url)
         
         if thumb_url:
             thumb = Thumbnail(thumb_url)
